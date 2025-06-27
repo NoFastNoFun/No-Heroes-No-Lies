@@ -1,6 +1,6 @@
-# Heroes Love to Lie - Custom Game Server
+# No Heroes No Lies - Custom Game Server
 
-This server enforces the game rules and maintains authoritative game state for the multiplayer card game **"Heroes Love to Lie"**, ensuring fairness, validation, and persistence.
+This server enforces the game rules and maintains authoritative game state for the multiplayer card game **"No Heroes No Lies"**, ensuring fairness, validation, and persistence.
 
 It is designed to work alongside **PocketBase** (which handles Auth, database, and real-time subscriptions) and is intended to be deployed via **Coolify** on our existing VPS.
 
@@ -33,12 +33,14 @@ It is designed to work alongside **PocketBase** (which handles Auth, database, a
 ## ✅ Feature List / TODO
 
 ### ✅ 1. Auth
+
 - [ ] Verify PocketBase user tokens via API
 - [ ] Middleware to attach authenticated user to request
 
 ---
 
 ### ✅ 2. Data Models (PocketBase Collections)
+
 - [ ] `users`
   - id, email, password, display_name
 - [ ] `cards`
@@ -51,6 +53,7 @@ It is designed to work alongside **PocketBase** (which handles Auth, database, a
 ---
 
 ### ✅ 3. API Endpoints
+
 - [ ] `POST /game`
   - Create a new game session
   - Assign players
@@ -71,6 +74,7 @@ It is designed to work alongside **PocketBase** (which handles Auth, database, a
 ---
 
 ### ✅ 4. Game Logic
+
 - [ ] Validate moves against current state
 - [ ] Enforce turn order
 - [ ] Handle hidden roles and bluffing rules
@@ -80,6 +84,7 @@ It is designed to work alongside **PocketBase** (which handles Auth, database, a
 ---
 
 ### ✅ 5. PocketBase Integration
+
 - [ ] Connect to PocketBase via REST or SDK
 - [ ] CRUD operations for:
   - Game sessions
@@ -90,12 +95,14 @@ It is designed to work alongside **PocketBase** (which handles Auth, database, a
 ---
 
 ### ✅ 6. Real-Time Support
+
 - [ ] Optionally trigger PocketBase subscriptions on session updates
 - [ ] Ensure minimal latency for turn-based play
 
 ---
 
 ### ✅ 7. Deployment
+
 - [ ] Create Dockerfile
 - [ ] Set up environment variables (PocketBase URL, API key)
 - [ ] Deploy via Coolify on VPS
@@ -103,6 +110,7 @@ It is designed to work alongside **PocketBase** (which handles Auth, database, a
 ---
 
 ### ✅ 8. Testing
+
 - [ ] Unit tests for move validation logic
 - [ ] Integration tests for PocketBase updates
 
@@ -111,5 +119,4 @@ It is designed to work alongside **PocketBase** (which handles Auth, database, a
 ## 💡 Notes
 
 - This server does **not** handle static file serving or frontend.  
-- Client apps will communicate via HTTP API, and listen to PocketBase real-time updates for session state.  
-- Admins can add/edit cards and heroes directly in PocketBase’s built-in Admin UI.
+- Client apps will communicate via HTTP API, and listen to PocketBase real-time updates for session state.

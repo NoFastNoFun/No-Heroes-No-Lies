@@ -1,7 +1,7 @@
-# No Heroes No Lies - Custom Game Server
+# No Heroes No Lies – Custom Game Server
 
-Authoritative backend that enforces all rules for the multiplayer card game **"No Heroes No Lies."**  
-Runs alongside **PocketBase** (DB + Auth + Realtime)
+Authoritative backend that enforces all rules for the multiplayer card game **“No Heroes No Lies.”**  
+Runs alongside **PocketBase** (DB + Auth + Realtime) and is deployed with **Coolify** on a VPS.
 
 ---
 
@@ -19,9 +19,9 @@ Runs alongside **PocketBase** (DB + Auth + Realtime)
 | Layer            | Responsibility |
 |------------------|----------------|
 | **PocketBase**   | Auth (`games_accounts`), storage (`powers`, `cards`, `game_sessions`, `moves`), realtime subscriptions |
-| **Go server**    | All game logic, HTTP API, host-gate, AO_KEY header, health probe |
+| **Go server**    | Game logic, HTTP API, host-gate, AO_KEY header, health probe |
 
-**Server-PocketBase trust:** every request carries `AO_KEY` in the header; no admin API token needed.
+*All PocketBase calls carry the mandatory `AO_KEY` header; no admin token is used.*
 
 ---
 
@@ -31,10 +31,10 @@ Runs alongside **PocketBase** (DB + Auth + Realtime)
 
 | Task | Status |
 |------|--------|
-| Host-filter middleware (`Host` must end with configured suffix) | **DONE** |
-| Global AO_KEY header on all PB calls | **DONE** |
-| Auth middleware (verify PocketBase user JWT, inject playerID) | **DONE** |
-| `/api/health` liveness endpoint | **DONE** |
+| Host-filter middleware (`Host` must end with configured suffix) | ✅ |
+| Global `AO_KEY` header on all PB calls | ✅ |
+| Auth middleware (verify PocketBase user JWT, inject playerID) | ✅ |
+| `/api/health` liveness endpoint | ✅ |
 
 ---
 
@@ -42,11 +42,11 @@ Runs alongside **PocketBase** (DB + Auth + Realtime)
 
 | Collection | Status | Notes |
 |------------|--------|-------|
-| `games_accounts` | **DONE** | custom auth table with status & avatar |
-| `powers` | **DONE** | includes `order`, `type`, `cost`, `trigger` |
-| `cards` | **DONE** | references `power_ids`, has `default_amount_per_session` |
-| `game_sessions` | **DONE** | JSON state template implemented |
-| `moves` | OPTIONAL | audit / replay - **TODO** to write from server |
+| `games_accounts` | ✅ | custom auth table with status & avatar |
+| `powers` | ✅ | has `order`, `type`, `cost`, `trigger` |
+| `cards` | ✅ | references `power_ids`, includes `default_amount_per_session` |
+| `game_sessions` | ✅ | JSON state template implemented |
+| `moves` | ✅ | action log for audit / replay |
 
 ---
 
@@ -54,10 +54,10 @@ Runs alongside **PocketBase** (DB + Auth + Realtime)
 
 | Route | Status | Notes |
 |-------|--------|-------|
-| `GET  /api/health` | **DONE** | liveness probe |
-| `GET  /game/{id}` | **DONE** | fetch current session |
-| `POST /game/{id}/move` | **DONE (minimal)** | applies a power (rule-set still WIP) |
-| `POST /game` | **TODO** | create session, build deck respecting card limits |
+| `GET  /api/health` | ✅ | liveness probe |
+| `GET  /game/{id}` | ✅ | fetch current session |
+| `POST /game/{id}/move` | **✅ (minimal)** | applies a power (rule-set WIP) |
+| `POST /game` | **TODO** | create session, build deck with card limits |
 | `POST /game/{id}/forfeit` | **TODO** | player quits / surrender |
 
 ---
@@ -66,7 +66,7 @@ Runs alongside **PocketBase** (DB + Auth + Realtime)
 
 | Task | Status |
 |------|--------|
-| Turn-order enforcement | **DONE (basic)** |
+| Turn-order enforcement | **✅ (basic)** |
 | Cost deduction (coins / gems) | **TODO** |
 | Power **order** chain enforcement | **TODO** |
 | Passive trigger evaluation | **TODO** |
@@ -82,7 +82,7 @@ Runs alongside **PocketBase** (DB + Auth + Realtime)
 | Task | Status |
 |------|--------|
 | Push state changes via PocketBase subscriptions | **TODO** |
-| Optionally WebSocket fan-out for low-latency UX | **TODO** |
+| Optional WebSocket fan-out for low-latency UX | **TODO** |
 
 ---
 
@@ -90,9 +90,9 @@ Runs alongside **PocketBase** (DB + Auth + Realtime)
 
 | Task | Status |
 |------|--------|
-| Multi-stage Dockerfile (static binary, Alpine) | **DONE** |
-| Coolify service with env vars: `PORT`, `POCKETBASE_URL`, `POCKETBASE_AO_KEY`, `ALLOWED_DOMAIN_SUFFIX` | **DONE** |
-| `/health` used as Docker/Coolify health-check | **DONE** |
+| Multi-stage Dockerfile (static binary, Alpine) | ✅ |
+| Coolify service with env vars (`PORT`, `POCKETBASE_URL`, `POCKETBASE_AO_KEY`, `ALLOWED_DOMAIN_SUFFIX`) | ✅ |
+| `/api/health` used as Docker/Coolify health-check | ✅ |
 | Graceful shutdown | **TODO** (signal handling) |
 
 ---
@@ -108,6 +108,7 @@ Runs alongside **PocketBase** (DB + Auth + Realtime)
 
 ## 💡 Notes
 
-- All non-game concerns (auth, host gate, health, PB headers) are finished.  
-- Remaining work is **pure gameplay logic** plus optional niceties (realtime fan-out, tests).  
-- Clients send `Authorization: Bearer <PB-JWT>` and interact only with `/game/*` endpoints; they listen to PocketBase realtime feeds for state refresh.
+- All infrastructure (auth, host gate, health, PocketBase wiring) is in place.  
+
+- Remaining work is purely gameplay logic plus optional realtime fan-out and tests.  
+- Clients send `Authorization: Bearer <PB-JWT>` to the server and listen to PocketBase realtime feeds for state refresh.

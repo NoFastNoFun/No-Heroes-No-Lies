@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"no-heroes-no-lies/internal/auth"
 	"no-heroes-no-lies/internal/models"
 	"no-heroes-no-lies/internal/services"
 
@@ -38,7 +39,12 @@ func postMove(svc *services.GameService) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "id")
-		playerID := r.Header.Get("X-Player-ID") // TODO: replace with auth context
+
+		playerID, err := auth.PlayerIDFromContext(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
 
 		var body req
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -47,7 +53,6 @@ func postMove(svc *services.GameService) http.HandlerFunc {
 		}
 
 		power := models.Power{ID: body.PowerID}
-
 		if err := svc.ApplyMove(sessionID, power, playerID); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return

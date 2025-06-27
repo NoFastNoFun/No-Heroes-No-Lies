@@ -1,122 +1,113 @@
 # No Heroes No Lies - Custom Game Server
 
-This server enforces the game rules and maintains authoritative game state for the multiplayer card game **"No Heroes No Lies"**, ensuring fairness, validation, and persistence.
-
-It is designed to work alongside **PocketBase** (which handles Auth, database, and real-time subscriptions) and is intended to be deployed via **Coolify** on our existing VPS.
+Authoritative backend that enforces all rules for the multiplayer card game **"No Heroes No Lies."**  
+Runs alongside **PocketBase** (DB + Auth + Realtime)
 
 ---
 
 ## 🎯 Purpose
 
-✅ Provide a secure, authoritative layer to validate and process player moves  
-✅ Enforce game rules, turns, and hidden roles/bluffing logic  
-✅ Update game session state in PocketBase  
-✅ Expose a simple HTTP API for the client to interact with  
+- Validate and process player moves securely  
+- Enforce turns, costs, hidden-role bluffing, passives, win conditions  
+- Persist game state in PocketBase  
+- Offer a clean HTTP API for clients (web / mobile)  
 
 ---
 
-## ⚙️ Architecture Assumptions
+## ⚙️ Architecture
 
-- **PocketBase** handles:
-  - User accounts and authentication
-  - Persistent storage of cards, game sessions, moves
-  - Real-time subscriptions for clients to receive state updates
+| Layer            | Responsibility |
+|------------------|----------------|
+| **PocketBase**   | Auth (`games_accounts`), storage (`powers`, `cards`, `game_sessions`, `moves`), realtime subscriptions |
+| **Go server**    | All game logic, HTTP API, host-gate, AO_KEY header, health probe |
 
-- **This server**:
-  - Accepts player moves
-  - Validates legality of moves
-  - Updates PocketBase game session state
-  - Keeps the game logic centralized and tamper-proof
+**Server-PocketBase trust:** every request carries `AO_KEY` in the header; no admin API token needed.
 
 ---
 
-## ✅ Feature List / TODO
+## ✅ Feature Checklist / TODO
 
-### ✅ 1. Auth
+### 1. Infrastructure & Security
 
-- [ ] Verify PocketBase user tokens via API
-- [ ] Middleware to attach authenticated user to request
-
----
-
-### ✅ 2. Data Models (PocketBase Collections)
-
-- [ ] `users`
-  - id, email, password, display_name
-- [ ] `cards`
-  - id, type (hero/monster), name, description, powers (JSON)
-- [ ] `game_sessions`
-  - id, player_ids (list of user ids), state (JSON), is_active (bool)
-- [ ] `moves` *(optional)*
-  - id, session_id, player_id, move_data (JSON)
+| Task | Status |
+|------|--------|
+| Host-filter middleware (`Host` must end with configured suffix) | **DONE** |
+| Global AO_KEY header on all PB calls | **DONE** |
+| Auth middleware (verify PocketBase user JWT, inject playerID) | **DONE** |
+| `/api/health` liveness endpoint | **DONE** |
 
 ---
 
-### ✅ 3. API Endpoints
+### 2. Data Models (PocketBase)
 
-- [ ] `POST /game`
-  - Create a new game session
-  - Assign players
-  - Seed initial game state
-
-- [ ] `GET /game/:id`
-  - Fetch current game session state
-
-- [ ] `POST /game/:id/move`
-  - Receive and validate a player's move
-  - Enforce turn order
-  - Enforce hidden role/bluffing rules
-  - Update state in PocketBase
-
-- [ ] `POST /game/:id/forfeit`
-  - Handle player surrender or leaving the game
+| Collection | Status | Notes |
+|------------|--------|-------|
+| `games_accounts` | **DONE** | custom auth table with status & avatar |
+| `powers` | **DONE** | includes `order`, `type`, `cost`, `trigger` |
+| `cards` | **DONE** | references `power_ids`, has `default_amount_per_session` |
+| `game_sessions` | **DONE** | JSON state template implemented |
+| `moves` | OPTIONAL | audit / replay - **TODO** to write from server |
 
 ---
 
-### ✅ 4. Game Logic
+### 3. API Endpoints
 
-- [ ] Validate moves against current state
-- [ ] Enforce turn order
-- [ ] Handle hidden roles and bluffing rules
-- [ ] Reject invalid or cheating moves
-- [ ] Transition game state correctly
-
----
-
-### ✅ 5. PocketBase Integration
-
-- [ ] Connect to PocketBase via REST or SDK
-- [ ] CRUD operations for:
-  - Game sessions
-  - Moves
-  - Cards
-- [ ] Support admin seeding of cards/heroes
+| Route | Status | Notes |
+|-------|--------|-------|
+| `GET  /api/health` | **DONE** | liveness probe |
+| `GET  /game/{id}` | **DONE** | fetch current session |
+| `POST /game/{id}/move` | **DONE (minimal)** | applies a power (rule-set still WIP) |
+| `POST /game` | **TODO** | create session, build deck respecting card limits |
+| `POST /game/{id}/forfeit` | **TODO** | player quits / surrender |
 
 ---
 
-### ✅ 6. Real-Time Support
+### 4. Game Logic Core
 
-- [ ] Optionally trigger PocketBase subscriptions on session updates
-- [ ] Ensure minimal latency for turn-based play
+| Task | Status |
+|------|--------|
+| Turn-order enforcement | **DONE (basic)** |
+| Cost deduction (coins / gems) | **TODO** |
+| Power **order** chain enforcement | **TODO** |
+| Passive trigger evaluation | **TODO** |
+| Combat & loot (`strength`, `loot`) | **TODO** |
+| Lying / hero-reveal mechanics | **TODO** |
+| Win detection (glory ≥ 4 or last standing) | **TODO** |
+| Persist each move to `moves` collection | **TODO** |
 
 ---
 
-### ✅ 7. Deployment
+### 5. Real-Time Updates
 
-- [ ] Create Dockerfile
-- [ ] Set up environment variables (PocketBase URL, API key)
-- [ ] Deploy via Coolify on VPS
+| Task | Status |
+|------|--------|
+| Push state changes via PocketBase subscriptions | **TODO** |
+| Optionally WebSocket fan-out for low-latency UX | **TODO** |
 
 ---
 
-### ✅ 8. Testing
+### 6. Deployment / Ops
 
-- [ ] Unit tests for move validation logic
-- [ ] Integration tests for PocketBase updates
+| Task | Status |
+|------|--------|
+| Multi-stage Dockerfile (static binary, Alpine) | **DONE** |
+| Coolify service with env vars: `PORT`, `POCKETBASE_URL`, `POCKETBASE_AO_KEY`, `ALLOWED_DOMAIN_SUFFIX` | **DONE** |
+| `/health` used as Docker/Coolify health-check | **DONE** |
+| Graceful shutdown | **TODO** (signal handling) |
+
+---
+
+### 7. Testing
+
+| Area | Status |
+|------|--------|
+| Unit tests for `services/game.go` (turns, costs, passives) | **TODO** |
+| Integration tests against PocketBase sandbox | **TODO** |
 
 ---
 
 ## 💡 Notes
 
-- This server does **not** handle static file serving or frontend.  
-- Client apps will communicate via HTTP API, and listen to PocketBase real-time updates for session state.
+- All non-game concerns (auth, host gate, health, PB headers) are finished.  
+- Remaining work is **pure gameplay logic** plus optional niceties (realtime fan-out, tests).  
+- Clients send `Authorization: Bearer <PB-JWT>` and interact only with `/game/*` endpoints; they listen to PocketBase realtime feeds for state refresh.

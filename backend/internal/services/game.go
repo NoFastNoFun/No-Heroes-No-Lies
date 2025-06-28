@@ -58,6 +58,9 @@ func (s *GameService) ApplyMove(
 	if err != nil {
 		return err
 	}
+	if contains(session.State.SpectatorIDs, playerID) {
+		return errors.New("spectators cannot act")
+	}
 	if session.State.CurrentTurn != playerID {
 		return errors.New("not your turn")
 	}

@@ -11,10 +11,24 @@ import (
 )
 
 // RegisterSessionRoutes mounts session creation / join / start.
-func RegisterSessionRoutes(r chi.Router, sess *services.SessionService) {
-	r.Post("/game", createSession(sess))
-	r.Post("/game/{id}/join", joinSession(sess))
-	r.Post("/game/{id}/start", startSession(sess))
+func RegisterSessionRoutes(r chi.Router, svc *services.SessionService) {
+	r.Post("/game", createSession(svc))
+	r.Post("/game/{id}/join", joinSession(svc))
+	r.Post("/game/{id}/start", startSession(svc))
+	r.Post("/game/{id}/ready", readyToggle(svc))
+}
+
+func readyToggle(sess *services.SessionService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		playerID, _ := auth.PlayerIDFromContext(r.Context())
+		sessionID := chi.URLParam(r, "id")
+		sn, err := sess.ToggleReady(sessionID, playerID)
+		if err != nil {
+			http.Error(w, err.Error(), 403)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(sn)
+	}
 }
 
 func createSession(sess *services.SessionService) http.HandlerFunc {
@@ -36,19 +50,16 @@ func createSession(sess *services.SessionService) http.HandlerFunc {
 
 func joinSession(sess *services.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		playerID, err := auth.PlayerIDFromContext(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
+		playerID, _ := auth.PlayerIDFromContext(r.Context())
 		sessionID := chi.URLParam(r, "id")
+		spec := r.URL.Query().Get("spectator") == "1"
 
-		session, err := sess.JoinSession(sessionID, playerID)
+		sn, err := sess.JoinSession(sessionID, playerID, spec)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusForbidden)
+			http.Error(w, err.Error(), 403)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(session)
+		_ = json.NewEncoder(w).Encode(sn)
 	}
 }
 

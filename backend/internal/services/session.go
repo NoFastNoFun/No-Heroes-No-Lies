@@ -42,28 +42,57 @@ func (s *SessionService) CreateSession(creatorID string) (models.GameSession, er
 }
 
 // JoinSession adds a player if the session is not active and below capacity.
-func (s *SessionService) JoinSession(sessionID, playerID string) (models.GameSession, error) {
+// spectator == true means caller only watches if game already active
+func (s *SessionService) JoinSession(
+	sessionID, playerID string, spectator bool,
+) (models.GameSession, error) {
+
 	session, err := s.pb.FetchSession(sessionID)
 	if err != nil {
 		return session, err
 	}
+
+	// Already playing?
+	inPlayers := contains(session.PlayerIDs, playerID)
+	inSpecs := contains(session.State.SpectatorIDs, playerID)
+
 	if session.IsActive {
-		return session, errors.New("session already started")
-	}
-	for _, id := range session.PlayerIDs {
-		if id == playerID {
-			return session, nil // already joined
+		if inPlayers {
+			return session, nil // already a player
 		}
+		if spectator {
+			if inSpecs {
+				return session, nil // already spectator
+			}
+			session.State.SpectatorIDs = append(session.State.SpectatorIDs, playerID)
+			err = s.pb.UpdateSession(session.ID, session.State, session.IsActive)
+			return session, err
+		}
+		return session, errors.New("game started; join as spectator")
+	}
+
+	// Lobby phase
+	if spectator {
+		return session, errors.New("can't spectate before start")
+	}
+	if inPlayers {
+		return session, nil
 	}
 	if len(session.PlayerIDs) >= 15 {
 		return session, errors.New("session full")
 	}
-
 	session.PlayerIDs = append(session.PlayerIDs, playerID)
-	if err := s.pb.UpdateSessionPlayers(session.ID, session.PlayerIDs); err != nil {
-		return session, err
+	err = s.pb.UpdateSessionPlayers(session.ID, session.PlayerIDs)
+	return session, err
+}
+
+func contains(list []string, v string) bool {
+	for _, id := range list {
+		if id == v {
+			return true
+		}
 	}
-	return session, nil
+	return false
 }
 
 // StartSession builds decks, deals cards, assigns life, and activates the game.
@@ -82,6 +111,10 @@ func (s *SessionService) StartSession(sessionID string) (models.GameSession, err
 	}
 	if pCount > 15 {
 		return session, errors.New("max 15 players")
+	}
+
+	if len(session.State.ReadyIDs) != len(session.PlayerIDs) {
+		return session, errors.New("all players must be ready")
 	}
 
 	// Build decks
@@ -172,4 +205,39 @@ func lifeForPlayers(n int) int {
 	default:
 		return 4
 	}
+}
+
+func (s *SessionService) ToggleReady(
+	sessionID, playerID string,
+) (models.GameSession, error) {
+
+	session, err := s.pb.FetchSession(sessionID)
+	if err != nil {
+		return session, err
+	}
+
+	// only before start and must be a listed player
+	if session.IsActive || !contains(session.PlayerIDs, playerID) {
+		return session, errors.New("cannot ready at this time")
+	}
+
+	ready := session.State.ReadyIDs
+	if contains(ready, playerID) {
+		// unready
+		session.State.ReadyIDs = filter(ready, playerID)
+	} else {
+		session.State.ReadyIDs = append(ready, playerID)
+	}
+	err = s.pb.UpdateSession(session.ID, session.State, session.IsActive)
+	return session, err
+}
+
+func filter(arr []string, drop string) []string {
+	var out []string
+	for _, v := range arr {
+		if v != drop {
+			out = append(out, v)
+		}
+	}
+	return out
 }

@@ -29,8 +29,10 @@ type GameState struct {
 	DiscardPile    []string        `json:"discard_pile,omitempty"`   // discarded hero cards (non-burned)
 	Order0UsedBy   map[string]bool `json:"order0_used_by,omitempty"` // tracks who used order-0 power this turn
 	DualAttack     bool            `json:"dual_attack"`
-	LastShootOK    bool            `json:"last_shoot_ok"`         // flag set by dual_attack power
-	WinnerIDs      []string        `json:"winner_ids,omitempty"`  // empty until game ends
-	Draw           bool            `json:"draw"`                  // true if stalemate
-	PauseVotes     map[string]bool `json:"pause_votes,omitempty"` // future pause/cancel feature
+	LastShootOK    bool            `json:"last_shoot_ok"`           // flag set by dual_attack power
+	WinnerIDs      []string        `json:"winner_ids,omitempty"`    // empty until game ends
+	Draw           bool            `json:"draw"`                    // true if stalemate
+	PauseVotes     map[string]bool `json:"pause_votes,omitempty"`   // future pause/cancel feature
+	ReadyIDs       []string        `json:"ready_ids,omitempty"`     // players who clicked "ready"
+	SpectatorIDs   []string        `json:"spectator_ids,omitempty"` // after start, read-only
 }

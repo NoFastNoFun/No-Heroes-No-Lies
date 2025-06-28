@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"time"
 
 	"no-heroes-no-lies/internal/models"
@@ -32,7 +33,7 @@ func nextPlayer(order []string, current string) string {
 }
 
 func heroStrength(
-	session *models.GameSession,
+	_ *models.GameSession,
 	player *models.PlayerState,
 	card models.Card, // caller's cached hero card
 ) int {
@@ -130,8 +131,31 @@ func (s *GameService) handleDemask(
 	actor.Gems -= 6
 
 	if target.CurrentHero == p.GuessHero {
+		// Demask successful - target loses life and must change hero
 		target.Life--
-		target.CurrentHero = ""
+
+		// Force target to draw a new hero card
+		if len(session.State.HeroDeck) > 0 {
+			newHero := session.State.HeroDeck[0]
+			session.State.HeroDeck = session.State.HeroDeck[1:]
+			s.changePlayerHero(session, target, newHero)
+		} else {
+			// If no cards in deck, try to recycle discard pile
+			s.recycleDiscardPile(session)
+
+			if len(session.State.HeroDeck) > 0 {
+				// Successfully recycled, draw new hero
+				newHero := session.State.HeroDeck[0]
+				session.State.HeroDeck = session.State.HeroDeck[1:]
+				s.changePlayerHero(session, target, newHero)
+			} else {
+				// No cards available at all, discard current hero and target has no hero
+				if target.CurrentHero != "" {
+					s.discardHeroCard(session, target.CurrentHero)
+				}
+				target.CurrentHero = ""
+			}
+		}
 	}
 	// demask has no alibi declaration → no challenge window
 	return nil
@@ -347,7 +371,7 @@ func playerPtr(s *models.GameSession, id string) *models.PlayerState {
 }
 
 func alibiPassives(
-	session *models.GameSession,
+	_ *models.GameSession,
 	player *models.PlayerState,
 	pbCli *pb.Client,
 ) ([]string, error) {
@@ -389,29 +413,7 @@ func hasPassive(
 	return false
 }
 
-func (s *GameService) applyTurnStartPassives(session *models.GameSession) {
-	p := playerPtr(session, session.State.CurrentTurn)
-	if p == nil {
-		return
-	}
-
-	// Detect once: does declared alibi own alternate_strength?
-	if hasPassive(session, p, "alternate_strength", s.pbClient) {
-		p.AltStrength = true
-	} else {
-		p.AltStrength = false
-		p.BonusStrength = 0 // reset if no longer claiming that hero
-	}
-
-	if p.AltStrength {
-		if p.BonusStrength == 1 {
-			p.BonusStrength = 7
-		} else {
-			p.BonusStrength = 1
-		}
-	}
-}
-
+// canStealGems checks if a target can prevent gem theft (used by powers)
 func canStealGems(
 	session *models.GameSession,
 	tgt *models.PlayerState,
@@ -436,8 +438,9 @@ func (s *GameService) giveGems(session *models.GameSession, recv *models.PlayerS
 	triggers.Dispatch(session, &ev, s.pbClient)
 }
 
+// effectiveStrength calculates the effective strength of a player's declared alibi
 func effectiveStrength(
-	session *models.GameSession,
+	_ *models.GameSession,
 	player *models.PlayerState,
 	pbCli *pb.Client,
 ) int {
@@ -526,5 +529,42 @@ func (s *GameService) Forfeit(sessionID, playerID string) error {
 		PlayerID:  playerID,
 		Type:      "forfeit",
 		Data:      string(move),
+	})
+}
+
+// Helper function to discard a hero card (adds to discard pile and updates public discard)
+func (s *GameService) discardHeroCard(session *models.GameSession, cardID string) {
+	if cardID == "" {
+		return
+	}
+	session.State.DiscardPile = append(session.State.DiscardPile, cardID)
+	session.State.PublicDiscard = cardID
+}
+
+// Helper function to change a player's hero card
+func (s *GameService) changePlayerHero(session *models.GameSession, player *models.PlayerState, newHeroID string) {
+	// Discard current hero if exists
+	if player.CurrentHero != "" {
+		s.discardHeroCard(session, player.CurrentHero)
+	}
+
+	// Set new hero
+	player.CurrentHero = newHeroID
+}
+
+// Helper function to recycle discard pile when hero deck is empty
+func (s *GameService) recycleDiscardPile(session *models.GameSession) {
+	if len(session.State.DiscardPile) == 0 {
+		return // nothing to recycle
+	}
+
+	// Move all non-burned discarded cards back to the deck
+	session.State.HeroDeck = append(session.State.HeroDeck, session.State.DiscardPile...)
+	session.State.DiscardPile = nil
+	session.State.PublicDiscard = "" // clear public discard since we're recycling
+
+	// Shuffle the recycled deck
+	rand.Shuffle(len(session.State.HeroDeck), func(i, j int) {
+		session.State.HeroDeck[i], session.State.HeroDeck[j] = session.State.HeroDeck[j], session.State.HeroDeck[i]
 	})
 }

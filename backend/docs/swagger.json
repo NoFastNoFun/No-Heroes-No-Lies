@@ -1,0 +1,763 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "No Heroes No Lies API",
+    "version": "1.0",
+    "description": "Game session management and gameplay API"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080/api",
+      "description": "Development server"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Check if the service is running",
+        "tags": ["health"],
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "OK"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game": {
+      "post": {
+        "summary": "Create new game session",
+        "description": "Create a new game session for the authenticated player",
+        "tags": ["session"],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameSession"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/{id}": {
+      "get": {
+        "summary": "Get game session",
+        "description": "Get current game session state for the authenticated player",
+        "tags": ["game"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session ID"
+          }
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session state retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/{id}/join": {
+      "post": {
+        "summary": "Join game session",
+        "description": "Join an existing game session as player or spectator",
+        "tags": ["session"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session ID"
+          },
+          {
+            "name": "spectator",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Set to '1' to join as spectator"
+          }
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Joined session successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameSession"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/{id}/start": {
+      "post": {
+        "summary": "Start game session",
+        "description": "Start a game session when all players are ready",
+        "tags": ["session"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session started successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/{id}/ready": {
+      "post": {
+        "summary": "Toggle player ready status",
+        "description": "Toggle the ready status of a player in a session",
+        "tags": ["session"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session ID"
+          }
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ready status toggled successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameSession"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/{id}/move": {
+      "post": {
+        "summary": "Make a move",
+        "description": "Submit a move in the game (demask, fight, or power)",
+        "tags": ["game"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MovePayload"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Move applied successfully"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/{id}/forfeit": {
+      "post": {
+        "summary": "Forfeit game",
+        "description": "Forfeit the current game session",
+        "tags": ["game"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session ID"
+          }
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Game forfeited successfully"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/game/{id}/challenge": {
+      "post": {
+        "summary": "Resolve challenge",
+        "description": "Resolve a challenge in the game",
+        "tags": ["game"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session ID"
+          }
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Challenge resolved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "result": {
+                      "type": "string",
+                      "example": "resolved"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "MovePayload": {
+        "type": "object",
+        "description": "Move payload for game actions",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["demask", "fight", "power"],
+            "example": "demask",
+            "description": "Type of move"
+          },
+          "target_player": {
+            "type": "string",
+            "example": "player123",
+            "description": "Target player for demask action"
+          },
+          "guess": {
+            "type": "string",
+            "example": "hero_name",
+            "description": "Hero guess for demask action"
+          },
+          "declared_alibi": {
+            "type": "string",
+            "example": "alibi_text",
+            "description": "Declared alibi for fight or power action"
+          },
+          "monster_id": {
+            "type": "string",
+            "example": "monster123",
+            "description": "Monster ID for fight action"
+          },
+          "power_id": {
+            "type": "string",
+            "example": "power456",
+            "description": "Power ID for power action"
+          },
+          "drawn_card_id": {
+            "type": "string",
+            "example": "card789",
+            "description": "Drawn card ID for power action"
+          },
+          "discard_card_id": {
+            "type": "string",
+            "example": "card101",
+            "description": "Discard card ID for power action"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["player1", "player2"],
+            "description": "Generic targets"
+          }
+        },
+        "required": ["type"]
+      },
+      "GameSession": {
+        "type": "object",
+        "description": "Game session information",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "session123"
+          },
+          "player_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["player1", "player2"]
+          },
+          "state": {
+            "$ref": "#/components/schemas/GameState"
+          },
+          "is_active": {
+            "type": "boolean",
+            "example": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2024-01-01T00:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2024-01-01T00:00:00Z"
+          }
+        }
+      },
+      "GameState": {
+        "type": "object",
+        "description": "Current game state",
+        "properties": {
+          "players": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Player"
+            }
+          },
+          "active_monsters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["monster1", "monster2"]
+          },
+          "current_turn": {
+            "type": "string",
+            "example": "player123"
+          }
+        }
+      },
+      "Player": {
+        "type": "object",
+        "description": "Player information",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "player123"
+          },
+          "current_hero": {
+            "type": "string",
+            "example": "hero_name"
+          },
+          "current_alibi": {
+            "type": "string",
+            "example": "alibi_text"
+          },
+          "life": {
+            "type": "integer",
+            "example": 10
+          },
+          "coins": {
+            "type": "integer",
+            "example": 5
+          },
+          "gems": {
+            "type": "integer",
+            "example": 2
+          }
+        }
+      },
+      "SessionView": {
+        "type": "object",
+        "description": "Complete game session view for a player",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "example": "session123"
+          },
+          "you": {
+            "$ref": "#/components/schemas/SanitizedSelf"
+          },
+          "others": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SanitizedPlayer"
+            }
+          },
+          "active_monsters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": ["monster1", "monster2"]
+          },
+          "current_turn": {
+            "type": "string",
+            "example": "player123"
+          }
+        }
+      },
+      "SanitizedSelf": {
+        "type": "object",
+        "description": "Player's own information in game view",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "player123"
+          },
+          "current_hero": {
+            "type": "string",
+            "example": "hero_name"
+          },
+          "current_alibi": {
+            "type": "string",
+            "example": "alibi_text"
+          },
+          "life": {
+            "type": "integer",
+            "example": 10
+          },
+          "coins": {
+            "type": "integer",
+            "example": 5
+          },
+          "gems": {
+            "type": "integer",
+            "example": 2
+          }
+        }
+      },
+      "SanitizedPlayer": {
+        "type": "object",
+        "description": "Other player information in game view",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "player456"
+          },
+          "life": {
+            "type": "integer",
+            "example": 8
+          },
+          "coins": {
+            "type": "integer",
+            "example": 3
+          },
+          "gems": {
+            "type": "integer",
+            "example": 1
+          }
+        }
+      },
+      "Power": {
+        "type": "object",
+        "description": "Game power/ability definition",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "power123"
+          },
+          "name": {
+            "type": "string",
+            "example": "Fireball"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["active", "passive"],
+            "example": "active"
+          },
+          "cost": {
+            "type": "integer",
+            "example": 3
+          },
+          "action": {
+            "type": "string",
+            "example": "damage"
+          },
+          "target": {
+            "type": "string",
+            "example": "enemy"
+          },
+          "trigger": {
+            "type": "string",
+            "example": "on_hit"
+          },
+          "order": {
+            "type": "integer",
+            "example": 1
+          },
+          "description": {
+            "type": "string",
+            "example": "Deals 5 damage to target"
+          }
+        }
+      },
+      "Loot": {
+        "type": "object",
+        "description": "Loot rewards from defeating monsters",
+        "properties": {
+          "coins": {
+            "type": "integer",
+            "example": 10
+          },
+          "gems": {
+            "type": "integer",
+            "example": 2
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "health",
+      "description": "Health check endpoints"
+    },
+    {
+      "name": "session",
+      "description": "Game session management"
+    },
+    {
+      "name": "game",
+      "description": "Gameplay actions"
+    }
+  ]
+}

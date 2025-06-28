@@ -45,7 +45,7 @@ func findPlayer(s *models.GameSession, id string) *models.PlayerState {
 
 // fetch passive actions on a player's DECLARED alibi
 func alibiPassives(
-	s *models.GameSession,
+	_ *models.GameSession,
 	p *models.PlayerState,
 	cli *pb.Client,
 ) ([]string, error) {
@@ -70,12 +70,12 @@ func alibiPassives(
 }
 
 func hasPassive(
-	s *models.GameSession,
+	_ *models.GameSession,
 	p *models.PlayerState,
 	act string,
 	cli *pb.Client,
 ) bool {
-	acts, err := alibiPassives(s, p, cli)
+	acts, err := alibiPassives(nil, p, cli)
 	if err != nil {
 		return false
 	}
@@ -87,12 +87,35 @@ func hasPassive(
 	return false
 }
 
+// canStealGems is used by steal_gem powers to check if target can prevent theft
 func canStealGems(
-	s *models.GameSession,
+	_ *models.GameSession,
 	target *models.PlayerState,
 	cli *pb.Client,
 ) bool {
-	return !hasPassive(s, target, "keep_gems", cli)
+	return !hasPassive(nil, target, "keep_gems", cli)
+}
+
+// Helper: ensure hero deck is not empty, recycling discard pile if needed
+func ensureHeroDeckNotEmpty(s *models.GameSession, rng *rand.Rand) error {
+	if len(s.State.HeroDeck) == 0 {
+		if len(s.State.DiscardPile) > 0 {
+			s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
+			s.State.DiscardPile = nil
+			s.State.PublicDiscard = "" // clear public discard since we're recycling
+			rng.Shuffle(len(s.State.HeroDeck), func(i, j int) {
+				s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
+			})
+		} else {
+			return errors.New("hero deck empty and no cards to recycle")
+		}
+	}
+	return nil
+}
+
+// Helper: get per-session rand.Rand seeded from session.State.Seed
+func sessionRand(s *models.GameSession) *rand.Rand {
+	return rand.New(rand.NewSource(s.State.Seed))
 }
 
 // ------------------------------------------------------------------
@@ -150,7 +173,17 @@ func init() {
 		})
 }
 
-func targetBonusStrength(p *models.PlayerState) int { return 0 } // placeholder
+func effectiveStrength(s *models.GameSession, p *models.PlayerState, cli *pb.Client) int {
+	card, err := cli.GetCard(p.CurrentAlibi)
+	if err != nil {
+		return 0
+	}
+	base := card.Strength
+	if p.BonusStrength != 0 {
+		base = p.BonusStrength
+	}
+	return base
+}
 
 // add_strength_to_challenger - +1 only for same-turn fight_player_with_discarded_card
 func init() {
@@ -173,10 +206,14 @@ func init() {
 // change_hero - draw new hero, discard current
 func init() {
 	register("change_hero", func(s *models.GameSession, a *models.PlayerState, _ models.MovePayload, _ *pb.Client) error {
-		if len(s.State.HeroDeck) == 0 {
-			return errors.New("hero deck empty")
+		rng := sessionRand(s)
+		if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+			return err
 		}
-		s.State.DiscardPile = append(s.State.DiscardPile, a.CurrentHero)
+		if a.CurrentHero != "" {
+			s.State.DiscardPile = append(s.State.DiscardPile, a.CurrentHero)
+			s.State.PublicDiscard = a.CurrentHero
+		}
 		a.CurrentHero = s.State.HeroDeck[0]
 		s.State.HeroDeck = s.State.HeroDeck[1:]
 		return nil
@@ -384,12 +421,13 @@ func init() {
 // blind_draw
 func init() {
 	register("blind_draw", func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, _ *pb.Client) error {
+		rng := sessionRand(s)
+		if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+			return err
+		}
 		target := findPlayer(s, p.TargetPlayer)
 		if target == nil {
 			return errors.New("target not found")
-		}
-		if len(s.State.HeroDeck) == 0 {
-			return errors.New("deck empty")
 		}
 		s.State.DiscardPile = append(s.State.DiscardPile, target.CurrentHero)
 		target.CurrentHero = s.State.HeroDeck[0]
@@ -402,12 +440,13 @@ func init() {
 // force_transform
 func init() {
 	register("force_transform", func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, _ *pb.Client) error {
+		rng := sessionRand(s)
+		if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+			return err
+		}
 		target := findPlayer(s, p.TargetPlayer)
 		if target == nil {
 			return errors.New("target not found")
-		}
-		if len(s.State.HeroDeck) == 0 {
-			return errors.New("deck empty")
 		}
 		s.State.DiscardPile = append(s.State.DiscardPile, target.CurrentHero)
 		target.CurrentHero = s.State.HeroDeck[0]
@@ -417,12 +456,168 @@ func init() {
 	})
 }
 
+// Helper: find players holding a specific card
+func findPlayersWithCard(s *models.GameSession, cardID string) []*models.PlayerState {
+	var players []*models.PlayerState
+	for i := range s.State.Players {
+		if s.State.Players[i].CurrentHero == cardID {
+			players = append(players, &s.State.Players[i])
+		}
+	}
+	return players
+}
+
+// Helper: remove a card from discard pile, return true if found and removed
+func removeCardFromDiscardPile(s *models.GameSession, cardID string) bool {
+	for i, card := range s.State.DiscardPile {
+		if card == cardID {
+			s.State.DiscardPile = append(s.State.DiscardPile[:i], s.State.DiscardPile[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// Helper: remove a card from deck, return true if found and removed
+func removeCardFromDeck(s *models.GameSession, cardID string) bool {
+	for i, card := range s.State.HeroDeck {
+		if card == cardID {
+			s.State.HeroDeck = append(s.State.HeroDeck[:i], s.State.HeroDeck[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// Helper: execute a card from a player (force them to draw new hero and lose life)
+func executeCardFromPlayer(s *models.GameSession, player *models.PlayerState, rng *rand.Rand) error {
+	if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+		return err
+	}
+
+	s.State.DiscardPile = append(s.State.DiscardPile, player.CurrentHero)
+	player.CurrentHero = s.State.HeroDeck[0]
+	s.State.HeroDeck = s.State.HeroDeck[1:]
+	player.CurrentAlibi = "" // must bluff again
+	player.Life--            // lose a life point
+	return nil
+}
+
+// Helper: execute a unique card (targets a player directly)
+func executeUniqueCard(s *models.GameSession, cardID string, playersWithCard []*models.PlayerState, rng *rand.Rand) (bool, error) {
+	if len(playersWithCard) == 0 {
+		return false, nil
+	}
+
+	// Randomly choose one player if multiple have the same card
+	chosenPlayer := playersWithCard[0]
+	if len(playersWithCard) > 1 {
+		chosenPlayer = playersWithCard[rng.Intn(len(playersWithCard))]
+	}
+
+	if err := executeCardFromPlayer(s, chosenPlayer, rng); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// Helper: execute a non-unique card (prioritizes discard pile, then deck, then players)
+func executeNonUniqueCard(s *models.GameSession, cardID string, playersWithCard []*models.PlayerState, rng *rand.Rand) (bool, error) {
+	// Try discard pile first
+	if removeCardFromDiscardPile(s, cardID) {
+		return true, nil
+	}
+
+	// Try deck next
+	if removeCardFromDeck(s, cardID) {
+		return true, nil
+	}
+
+	// Last resort: target a random player with the card
+	if len(playersWithCard) > 0 {
+		chosenPlayer := playersWithCard[rng.Intn(len(playersWithCard))]
+		if err := executeCardFromPlayer(s, chosenPlayer, rng); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// execution - burn a hero card permanently from the session
+func init() {
+	register("execution", func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, cli *pb.Client) error {
+		rng := sessionRand(s)
+		if p.DiscardCardID == "" {
+			return errors.New("discard_card_id required for execution")
+		}
+
+		// Get card info to check if it's unique
+		card, err := cli.GetCard(p.DiscardCardID)
+		if err != nil {
+			return err
+		}
+
+		isUnique := card.DefaultAmountPerSession == 1
+		playersWithCard := findPlayersWithCard(s, p.DiscardCardID)
+
+		// Execute the card based on uniqueness
+		var cardExecuted bool
+		var execErr error
+
+		if isUnique && len(playersWithCard) > 0 {
+			cardExecuted, execErr = executeUniqueCard(s, p.DiscardCardID, playersWithCard, rng)
+		} else {
+			cardExecuted, execErr = executeNonUniqueCard(s, p.DiscardCardID, playersWithCard, rng)
+		}
+
+		if execErr != nil {
+			return execErr
+		}
+
+		// Clear public discard if it was the executed card
+		if s.State.PublicDiscard == p.DiscardCardID {
+			s.State.PublicDiscard = ""
+		}
+
+		// Add the card to burned pile only if it was actually executed
+		if cardExecuted {
+			s.State.BurnedCards = append(s.State.BurnedCards, p.DiscardCardID)
+		}
+
+		return nil
+	})
+}
+
 // keep_gems passive → cancel steal_attempt
 func init() {
 	triggers.Register("steal_attempt", func(s *models.GameSession, ev *triggers.Event, cli *pb.Client) {
 		tgt := findPlayer(s, ev.TargetID)
-		if tgt != nil && hasPassive(s, tgt, "keep_gems", cli) {
+		if tgt != nil && hasPassive(nil, tgt, "keep_gems", cli) {
 			ev.Cancel = true
+		}
+	})
+}
+
+// tribute passive → halve gems gained by other players and send to prince
+func init() {
+	triggers.Register("gems_gained", func(s *models.GameSession, ev *triggers.Event, cli *pb.Client) {
+		// Find the Mad Prince (player with tribute passive)
+		var prince *models.PlayerState
+		for i := range s.State.Players {
+			if hasPassive(nil, &s.State.Players[i], "tribute", cli) {
+				prince = &s.State.Players[i]
+				break
+			}
+		}
+
+		// If prince is alive and gems gained > 1, halve them and send to prince
+		if prince != nil && prince.Life > 0 && ev.Amount > 1 {
+			halvedAmount := ev.Amount / 2
+			prince.Gems += halvedAmount
+			// The original player still gets the full amount (tribute is additional, not replacement)
 		}
 	})
 }
@@ -435,7 +630,7 @@ func init() {
 			if p.ID == ev.ActorID {
 				continue
 			}
-			if hasPassive(s, p, "teamwork", cli) {
+			if hasPassive(nil, p, "teamwork", cli) {
 				p.Gems += ev.Amount
 			}
 		}

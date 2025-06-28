@@ -18,6 +18,16 @@ func RegisterSessionRoutes(r chi.Router, svc *services.SessionService) {
 	r.Post("/game/{id}/ready", readyToggle(svc))
 }
 
+// @Summary Toggle player ready status
+// @Description Toggle the ready status of a player in a session
+// @Tags session
+// @Accept json
+// @Produce json
+// @Param id path string true "Session ID"
+// @Security BearerAuth
+// @Success 200 {object} models.GameSession
+// @Failure 403 {string} string "Forbidden"
+// @Router /game/{id}/ready [post]
 func readyToggle(sess *services.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		playerID, _ := auth.PlayerIDFromContext(r.Context())
@@ -31,6 +41,16 @@ func readyToggle(sess *services.SessionService) http.HandlerFunc {
 	}
 }
 
+// @Summary Create new game session
+// @Description Create a new game session for the authenticated player
+// @Tags session
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.GameSession
+// @Failure 401 {string} string "Unauthorized"
+// @Failure 502 {string} string "Bad Gateway"
+// @Router /game [post]
 func createSession(sess *services.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		playerID, err := auth.PlayerIDFromContext(r.Context())
@@ -48,6 +68,17 @@ func createSession(sess *services.SessionService) http.HandlerFunc {
 	}
 }
 
+// @Summary Join game session
+// @Description Join an existing game session as player or spectator
+// @Tags session
+// @Accept json
+// @Produce json
+// @Param id path string true "Session ID"
+// @Param spectator query string false "Set to '1' to join as spectator"
+// @Security BearerAuth
+// @Success 200 {object} models.GameSession
+// @Failure 403 {string} string "Forbidden"
+// @Router /game/{id}/join [post]
 func joinSession(sess *services.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		playerID, _ := auth.PlayerIDFromContext(r.Context())
@@ -63,6 +94,15 @@ func joinSession(sess *services.SessionService) http.HandlerFunc {
 	}
 }
 
+// @Summary Start game session
+// @Description Start a game session when all players are ready
+// @Tags session
+// @Accept json
+// @Produce json
+// @Param id path string true "Session ID"
+// @Success 200 {object} models.GameSession
+// @Failure 400 {string} string "Bad Request"
+// @Router /game/{id}/start [post]
 func startSession(sess *services.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "id")

@@ -27,6 +27,8 @@ type GameState struct {
 	Seed           int64           `json:"seed"`
 	LastMove       *LastMove       `json:"last_move,omitempty"`
 	DiscardPile    []string        `json:"discard_pile,omitempty"`   // discarded hero cards (non-burned)
+	BurnedCards    []string        `json:"burned_cards,omitempty"`   // burned hero cards (hidden from memory)
+	PublicDiscard  string          `json:"public_discard,omitempty"` // last discarded card (public knowledge)
 	Order0UsedBy   map[string]bool `json:"order0_used_by,omitempty"` // tracks who used order-0 power this turn
 	DualAttack     bool            `json:"dual_attack"`
 	LastShootOK    bool            `json:"last_shoot_ok"`           // flag set by dual_attack power

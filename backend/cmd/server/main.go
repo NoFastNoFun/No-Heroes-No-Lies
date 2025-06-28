@@ -18,16 +18,17 @@ func main() {
 	cfg := config.Load()
 
 	pbClient := pb.NewClient(cfg.PocketBaseURL, cfg.PocketBaseAOKey)
-	gameService := services.NewGameService(pbClient)
+	gameSvc := services.NewGameService(pbClient)
+	sessionSvc := services.NewSessionService(pbClient)
 
 	r := chi.NewRouter()
-	r.Use(auth.Middleware(pbClient))
 	r.Use(hostfilter.Middleware(cfg.AllowedDomainSuffix))
 	r.Use(auth.Middleware(pbClient))
 
-	// liveness probe
 	r.Get("/api/health", handlers.HealthHandler)
-	handlers.RegisterGameRoutes(r, gameService)
+
+	handlers.RegisterSessionRoutes(r, sessionSvc)
+	handlers.RegisterGameRoutes(r, gameSvc)
 
 	addr := ":" + cfg.Port
 	log.Printf("server listening on %s", addr)

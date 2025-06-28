@@ -7,7 +7,7 @@ import (
 	"no-heroes-no-lies/internal/pb"
 )
 
-// GameService provides game-rule operations.
+// GameService provides game rule operations.
 type GameService struct {
 	pbClient *pb.Client
 }
@@ -37,10 +37,13 @@ func (s *GameService) ApplyMove(
 		return errors.New("not your turn")
 	}
 
-	// TODO: full rule implementation here …
+	// TODO: full rule implementation
 
+	// Advance turn
 	session.State.CurrentTurn = nextPlayer(session.State.TurnOrder, playerID)
-	return s.pbClient.UpdateSession(sessionID, session.State)
+
+	// Update both state and is_active flag (unchanged here)
+	return s.pbClient.UpdateSession(sessionID, session.State, session.IsActive)
 }
 
 func nextPlayer(order []string, current string) string {

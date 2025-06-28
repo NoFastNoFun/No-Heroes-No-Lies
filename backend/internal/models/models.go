@@ -13,19 +13,6 @@ type Power struct {
 	Description string `json:"description"`
 }
 
-// Card is a hero, monster, etc.
-type Card struct {
-	ID                      string   `json:"id"`
-	Type                    string   `json:"type"` // hero | monster
-	Name                    string   `json:"name"`
-	Description             string   `json:"description"`
-	Strength                int      `json:"strength"`
-	PowerIDs                []string `json:"power_ids"`
-	Loot                    Loot     `json:"loot"`
-	DefaultAmountPerSession int      `json:"default_amount_per_session"`
-	CoverURL                string   `json:"cover"` // PB returns file URL
-}
-
 // Loot defines monster rewards.
 type Loot struct {
 	Coins int `json:"coins"`
@@ -46,11 +33,15 @@ type PlayerState struct {
 
 // GameState is the authoritative JSON blob.
 type GameState struct {
-	Players     []PlayerState `json:"players"`
-	TurnOrder   []string      `json:"turn_order"`
-	CurrentTurn string        `json:"current_turn"`
-	CoinPool    int           `json:"coin_pool"`
-	GemPool     int           `json:"gem_pool"`
+	Players        []PlayerState `json:"players"`
+	TurnOrder      []string      `json:"turn_order"`
+	CurrentTurn    string        `json:"current_turn"`
+	CoinPool       int           `json:"coin_pool"`
+	GemPool        int           `json:"gem_pool"`
+	HeroDeck       []string      `json:"hero_deck"`
+	MonsterDeck    []string      `json:"monster_deck"`
+	ActiveMonsters []string      `json:"active_monsters"`
+	Seed           int64         `json:"seed"`
 }
 
 // GameSession mirrors the PocketBase record we work with.

@@ -21,7 +21,7 @@ type Client struct {
 }
 
 // NewClient constructs a PocketBase client.
-func NewClient(baseURL string, aoKey string) *Client {
+func NewClient(baseURL, aoKey string) *Client {
 	return &Client{
 		baseURL: baseURL,
 		aoKey:   aoKey,
@@ -60,32 +60,6 @@ func (c *Client) FetchSession(id string) (models.GameSession, error) {
 	return session, nil
 }
 
-// UpdateSession patches the session state.
-func (c *Client) UpdateSession(id string, state models.GameState) error {
-	payload := map[string]interface{}{"state": state}
-	body, _ := json.Marshal(payload)
-
-	req, _ := http.NewRequest(
-		"PATCH",
-		fmt.Sprintf("%s/api/collections/game_sessions/records/%s", c.baseURL, id),
-		bytes.NewReader(body),
-	)
-	c.withHeaders(req)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("update failed: %s", string(b))
-	}
-	return nil
-}
-
 // VerifyUserToken hits the auth-refresh route and returns the user ID on success.
 func (c *Client) VerifyUserToken(userToken string) (string, error) {
 	type respBody struct {
@@ -115,4 +89,113 @@ func (c *Client) VerifyUserToken(userToken string) (string, error) {
 		return "", err
 	}
 	return body.Record.ID, nil
+}
+
+// InsertSession creates a new game_sessions record.
+func (c *Client) InsertSession(session models.GameSession) (models.GameSession, error) {
+	var out models.GameSession
+	body, _ := json.Marshal(session)
+
+	req, _ := http.NewRequest(
+		"POST",
+		fmt.Sprintf("%s/api/collections/game_sessions/records", c.baseURL),
+		bytes.NewReader(body),
+	)
+	c.withHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return out, errors.New("failed to create session")
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// UpdateSession updates state and is_active in one patch.
+func (c *Client) UpdateSession(id string, state models.GameState, active bool) error {
+	payload := map[string]interface{}{
+		"state":     state,
+		"is_active": active,
+	}
+	body, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest(
+		"PATCH",
+		fmt.Sprintf("%s/api/collections/game_sessions/records/%s", c.baseURL, id),
+		bytes.NewReader(body),
+	)
+	c.withHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("update failed: %s", string(b))
+	}
+	return nil
+}
+
+// UpdateSessionPlayers patches only the player_ids field.
+func (c *Client) UpdateSessionPlayers(id string, players []string) error {
+	payload := map[string]interface{}{
+		"player_ids": players,
+	}
+	body, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest(
+		"PATCH",
+		fmt.Sprintf("%s/api/collections/game_sessions/records/%s", c.baseURL, id),
+		bytes.NewReader(body),
+	)
+	c.withHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("failed to patch players")
+	}
+	return nil
+}
+
+// ListCards fetches all card definitions.
+func (c *Client) ListCards() ([]models.Card, error) {
+	type result struct {
+		Items []models.Card `json:"items"`
+	}
+	var r result
+
+	req, _ := http.NewRequest(
+		"GET",
+		fmt.Sprintf("%s/api/collections/cards/records?perPage=200", c.baseURL),
+		nil,
+	)
+	c.withHeaders(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("failed to list cards")
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return nil, err
+	}
+	return r.Items, nil
 }

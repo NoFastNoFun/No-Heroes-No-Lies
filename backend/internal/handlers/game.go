@@ -7,6 +7,7 @@ import (
 	"no-heroes-no-lies/internal/auth"
 	"no-heroes-no-lies/internal/models"
 	"no-heroes-no-lies/internal/services"
+	"no-heroes-no-lies/internal/view"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -21,14 +22,21 @@ func RegisterGameRoutes(r chi.Router, svc *services.GameService) {
 
 func getSession(svc *services.GameService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
+		playerID, err := auth.PlayerIDFromContext(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
 
+		id := chi.URLParam(r, "id")
 		session, err := svc.FetchSession(id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(session)
+
+		resp := view.Build(session, playerID)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 

@@ -456,6 +456,96 @@ func init() {
 	})
 }
 
+// Helper: find players holding a specific card
+func findPlayersWithCard(s *models.GameSession, cardID string) []*models.PlayerState {
+	var players []*models.PlayerState
+	for i := range s.State.Players {
+		if s.State.Players[i].CurrentHero == cardID {
+			players = append(players, &s.State.Players[i])
+		}
+	}
+	return players
+}
+
+// Helper: remove a card from discard pile, return true if found and removed
+func removeCardFromDiscardPile(s *models.GameSession, cardID string) bool {
+	for i, card := range s.State.DiscardPile {
+		if card == cardID {
+			s.State.DiscardPile = append(s.State.DiscardPile[:i], s.State.DiscardPile[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// Helper: remove a card from deck, return true if found and removed
+func removeCardFromDeck(s *models.GameSession, cardID string) bool {
+	for i, card := range s.State.HeroDeck {
+		if card == cardID {
+			s.State.HeroDeck = append(s.State.HeroDeck[:i], s.State.HeroDeck[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// Helper: execute a card from a player (force them to draw new hero and lose life)
+func executeCardFromPlayer(s *models.GameSession, player *models.PlayerState, rng *rand.Rand) error {
+	if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+		return err
+	}
+
+	s.State.DiscardPile = append(s.State.DiscardPile, player.CurrentHero)
+	player.CurrentHero = s.State.HeroDeck[0]
+	s.State.HeroDeck = s.State.HeroDeck[1:]
+	player.CurrentAlibi = "" // must bluff again
+	player.Life--            // lose a life point
+	return nil
+}
+
+// Helper: execute a unique card (targets a player directly)
+func executeUniqueCard(s *models.GameSession, cardID string, playersWithCard []*models.PlayerState, rng *rand.Rand) (bool, error) {
+	if len(playersWithCard) == 0 {
+		return false, nil
+	}
+
+	// Randomly choose one player if multiple have the same card
+	chosenPlayer := playersWithCard[0]
+	if len(playersWithCard) > 1 {
+		chosenPlayer = playersWithCard[rng.Intn(len(playersWithCard))]
+	}
+
+	if err := executeCardFromPlayer(s, chosenPlayer, rng); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// Helper: execute a non-unique card (prioritizes discard pile, then deck, then players)
+func executeNonUniqueCard(s *models.GameSession, cardID string, playersWithCard []*models.PlayerState, rng *rand.Rand) (bool, error) {
+	// Try discard pile first
+	if removeCardFromDiscardPile(s, cardID) {
+		return true, nil
+	}
+
+	// Try deck next
+	if removeCardFromDeck(s, cardID) {
+		return true, nil
+	}
+
+	// Last resort: target a random player with the card
+	if len(playersWithCard) > 0 {
+		chosenPlayer := playersWithCard[rng.Intn(len(playersWithCard))]
+		if err := executeCardFromPlayer(s, chosenPlayer, rng); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	return false, nil
+}
+
 // execution - burn a hero card permanently from the session
 func init() {
 	register("execution", func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, cli *pb.Client) error {
@@ -471,105 +561,28 @@ func init() {
 		}
 
 		isUnique := card.DefaultAmountPerSession == 1
+		playersWithCard := findPlayersWithCard(s, p.DiscardCardID)
 
-		// Count how many copies of this card exist in the session
-		cardCount := 0
-		var playersWithCard []*models.PlayerState
+		// Execute the card based on uniqueness
+		var cardExecuted bool
+		var execErr error
 
-		// Count in discard pile
-		for _, cardID := range s.State.DiscardPile {
-			if cardID == p.DiscardCardID {
-				cardCount++
-			}
-		}
-
-		// Count in deck
-		for _, cardID := range s.State.HeroDeck {
-			if cardID == p.DiscardCardID {
-				cardCount++
-			}
-		}
-
-		// Count in burned pile
-		for _, cardID := range s.State.BurnedCards {
-			if cardID == p.DiscardCardID {
-				cardCount++
-			}
-		}
-
-		// Count in players' hands
-		for i := range s.State.Players {
-			if s.State.Players[i].CurrentHero == p.DiscardCardID {
-				cardCount++
-				playersWithCard = append(playersWithCard, &s.State.Players[i])
-			}
-		}
-
-		// If card is unique and held by a player, they lose life and card
-		cardExecuted := false
 		if isUnique && len(playersWithCard) > 0 {
-			// Randomly choose one player if multiple have the same card
-			chosenPlayer := playersWithCard[0]
-			if len(playersWithCard) > 1 {
-				chosenPlayer = playersWithCard[rng.Intn(len(playersWithCard))]
-			}
-
-			if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
-				return err
-			}
-
-			s.State.DiscardPile = append(s.State.DiscardPile, chosenPlayer.CurrentHero)
-			chosenPlayer.CurrentHero = s.State.HeroDeck[0]
-			s.State.HeroDeck = s.State.HeroDeck[1:]
-			chosenPlayer.CurrentAlibi = "" // must bluff again
-			chosenPlayer.Life--            // lose a life point
-			cardExecuted = true
+			cardExecuted, execErr = executeUniqueCard(s, p.DiscardCardID, playersWithCard, rng)
 		} else {
-			// Card is not unique or not held by players, destroy from discard pile first
-			foundInDiscard := false
-			for i, cardID := range s.State.DiscardPile {
-				if cardID == p.DiscardCardID {
-					s.State.DiscardPile = append(s.State.DiscardPile[:i], s.State.DiscardPile[i+1:]...)
-					foundInDiscard = true
-					cardExecuted = true
-					break
-				}
-			}
-
-			// If not in discard pile, destroy from deck
-			if !foundInDiscard {
-				foundInDeck := false
-				for i, cardID := range s.State.HeroDeck {
-					if cardID == p.DiscardCardID {
-						s.State.HeroDeck = append(s.State.HeroDeck[:i], s.State.HeroDeck[i+1:]...)
-						foundInDeck = true
-						cardExecuted = true
-						break
-					}
-				}
-
-				// If not in deck either, target a random player with the card
-				if !foundInDeck && len(playersWithCard) > 0 {
-					chosenPlayer := playersWithCard[rng.Intn(len(playersWithCard))]
-
-					if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
-						return err
-					}
-
-					s.State.DiscardPile = append(s.State.DiscardPile, chosenPlayer.CurrentHero)
-					chosenPlayer.CurrentHero = s.State.HeroDeck[0]
-					s.State.HeroDeck = s.State.HeroDeck[1:]
-					chosenPlayer.CurrentAlibi = "" // must bluff again
-					chosenPlayer.Life--            // lose a life point (always lose life if holding executed card)
-					cardExecuted = true
-				}
-			}
+			cardExecuted, execErr = executeNonUniqueCard(s, p.DiscardCardID, playersWithCard, rng)
 		}
 
+		if execErr != nil {
+			return execErr
+		}
+
+		// Clear public discard if it was the executed card
 		if s.State.PublicDiscard == p.DiscardCardID {
 			s.State.PublicDiscard = ""
 		}
 
+		// Add the card to burned pile only if it was actually executed
 		if cardExecuted {
 			s.State.BurnedCards = append(s.State.BurnedCards, p.DiscardCardID)
 		}

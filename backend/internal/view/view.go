@@ -30,6 +30,7 @@ type SessionView struct {
 	Others         []SanitizedPlayer `json:"others"`
 	ActiveMonsters []string          `json:"active_monsters" example:"monster1,monster2"`
 	CurrentTurn    string            `json:"current_turn" example:"player123"`
+	PublicDiscard  string            `json:"public_discard,omitempty" example:"hero_card_id"` // Last discarded hero card (public knowledge)
 }
 
 // Build returns a per-player view of the session state.
@@ -63,5 +64,6 @@ func Build(session models.GameSession, playerID string) SessionView {
 		Others:         others,
 		ActiveMonsters: session.State.ActiveMonsters,
 		CurrentTurn:    session.State.CurrentTurn,
+		PublicDiscard:  session.State.PublicDiscard,
 	}
 }

@@ -45,7 +45,7 @@ func findPlayer(s *models.GameSession, id string) *models.PlayerState {
 
 // fetch passive actions on a player's DECLARED alibi
 func alibiPassives(
-	s *models.GameSession,
+	_ *models.GameSession,
 	p *models.PlayerState,
 	cli *pb.Client,
 ) ([]string, error) {
@@ -70,12 +70,12 @@ func alibiPassives(
 }
 
 func hasPassive(
-	s *models.GameSession,
+	_ *models.GameSession,
 	p *models.PlayerState,
 	act string,
 	cli *pb.Client,
 ) bool {
-	acts, err := alibiPassives(s, p, cli)
+	acts, err := alibiPassives(nil, p, cli)
 	if err != nil {
 		return false
 	}
@@ -87,12 +87,13 @@ func hasPassive(
 	return false
 }
 
+// canStealGems is used by steal_gem powers to check if target can prevent theft
 func canStealGems(
-	s *models.GameSession,
+	_ *models.GameSession,
 	target *models.PlayerState,
 	cli *pb.Client,
 ) bool {
-	return !hasPassive(s, target, "keep_gems", cli)
+	return !hasPassive(nil, target, "keep_gems", cli)
 }
 
 // ------------------------------------------------------------------
@@ -150,7 +151,17 @@ func init() {
 		})
 }
 
-func targetBonusStrength(p *models.PlayerState) int { return 0 } // placeholder
+func effectiveStrength(s *models.GameSession, p *models.PlayerState, cli *pb.Client) int {
+	card, err := cli.GetCard(p.CurrentAlibi)
+	if err != nil {
+		return 0
+	}
+	base := card.Strength
+	if p.BonusStrength != 0 {
+		base = p.BonusStrength
+	}
+	return base
+}
 
 // add_strength_to_challenger - +1 only for same-turn fight_player_with_discarded_card
 func init() {
@@ -173,10 +184,30 @@ func init() {
 // change_hero - draw new hero, discard current
 func init() {
 	register("change_hero", func(s *models.GameSession, a *models.PlayerState, _ models.MovePayload, _ *pb.Client) error {
+		// Check if deck is empty and try to recycle discard pile
 		if len(s.State.HeroDeck) == 0 {
-			return errors.New("hero deck empty")
+			if len(s.State.DiscardPile) > 0 {
+				// Recycle discard pile
+				s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
+				s.State.DiscardPile = nil
+				s.State.PublicDiscard = "" // clear public discard since we're recycling
+
+				// Shuffle the recycled deck
+				rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
+					s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
+				})
+			} else {
+				return errors.New("hero deck empty and no cards to recycle")
+			}
 		}
-		s.State.DiscardPile = append(s.State.DiscardPile, a.CurrentHero)
+
+		// Discard current hero to public discard pile
+		if a.CurrentHero != "" {
+			s.State.DiscardPile = append(s.State.DiscardPile, a.CurrentHero)
+			s.State.PublicDiscard = a.CurrentHero
+		}
+
+		// Draw new hero
 		a.CurrentHero = s.State.HeroDeck[0]
 		s.State.HeroDeck = s.State.HeroDeck[1:]
 		return nil
@@ -388,9 +419,24 @@ func init() {
 		if target == nil {
 			return errors.New("target not found")
 		}
+
+		// Check if deck is empty and try to recycle discard pile
 		if len(s.State.HeroDeck) == 0 {
-			return errors.New("deck empty")
+			if len(s.State.DiscardPile) > 0 {
+				// Recycle discard pile
+				s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
+				s.State.DiscardPile = nil
+				s.State.PublicDiscard = "" // clear public discard since we're recycling
+
+				// Shuffle the recycled deck
+				rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
+					s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
+				})
+			} else {
+				return errors.New("deck empty and no cards to recycle")
+			}
 		}
+
 		s.State.DiscardPile = append(s.State.DiscardPile, target.CurrentHero)
 		target.CurrentHero = s.State.HeroDeck[0]
 		s.State.HeroDeck = s.State.HeroDeck[1:]
@@ -406,9 +452,24 @@ func init() {
 		if target == nil {
 			return errors.New("target not found")
 		}
+
+		// Check if deck is empty and try to recycle discard pile
 		if len(s.State.HeroDeck) == 0 {
-			return errors.New("deck empty")
+			if len(s.State.DiscardPile) > 0 {
+				// Recycle discard pile
+				s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
+				s.State.DiscardPile = nil
+				s.State.PublicDiscard = "" // clear public discard since we're recycling
+
+				// Shuffle the recycled deck
+				rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
+					s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
+				})
+			} else {
+				return errors.New("deck empty and no cards to recycle")
+			}
 		}
+
 		s.State.DiscardPile = append(s.State.DiscardPile, target.CurrentHero)
 		target.CurrentHero = s.State.HeroDeck[0]
 		s.State.HeroDeck = s.State.HeroDeck[1:]
@@ -417,12 +478,177 @@ func init() {
 	})
 }
 
+// execution - burn a hero card permanently from the session
+func init() {
+	register("execution", func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, cli *pb.Client) error {
+		if p.DiscardCardID == "" {
+			return errors.New("discard_card_id required for execution")
+		}
+
+		// Get card info to check if it's unique
+		card, err := cli.GetCard(p.DiscardCardID)
+		if err != nil {
+			return err
+		}
+
+		isUnique := card.DefaultAmountPerSession == 1
+
+		// Count how many copies of this card exist in the session
+		cardCount := 0
+		var playersWithCard []*models.PlayerState
+
+		// Count in discard pile
+		for _, cardID := range s.State.DiscardPile {
+			if cardID == p.DiscardCardID {
+				cardCount++
+			}
+		}
+
+		// Count in deck
+		for _, cardID := range s.State.HeroDeck {
+			if cardID == p.DiscardCardID {
+				cardCount++
+			}
+		}
+
+		// Count in burned pile
+		for _, cardID := range s.State.BurnedCards {
+			if cardID == p.DiscardCardID {
+				cardCount++
+			}
+		}
+
+		// Count in players' hands
+		for i := range s.State.Players {
+			if s.State.Players[i].CurrentHero == p.DiscardCardID {
+				cardCount++
+				playersWithCard = append(playersWithCard, &s.State.Players[i])
+			}
+		}
+
+		// If card is unique and held by a player, they lose life and card
+		if isUnique && len(playersWithCard) > 0 {
+			// Randomly choose one player if multiple have the same card
+			chosenPlayer := playersWithCard[0]
+			if len(playersWithCard) > 1 {
+				chosenPlayer = playersWithCard[rand.Intn(len(playersWithCard))]
+			}
+
+			// Check if deck is empty and try to recycle discard pile
+			if len(s.State.HeroDeck) == 0 {
+				if len(s.State.DiscardPile) > 0 {
+					// Recycle discard pile
+					s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
+					s.State.DiscardPile = nil
+					s.State.PublicDiscard = "" // clear public discard since we're recycling
+
+					// Shuffle the recycled deck
+					rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
+						s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
+					})
+				} else {
+					return errors.New("hero deck empty and no cards to recycle")
+				}
+			}
+
+			// Force the player to draw a new hero
+			s.State.DiscardPile = append(s.State.DiscardPile, chosenPlayer.CurrentHero)
+			chosenPlayer.CurrentHero = s.State.HeroDeck[0]
+			s.State.HeroDeck = s.State.HeroDeck[1:]
+			chosenPlayer.CurrentAlibi = "" // must bluff again
+			chosenPlayer.Life--            // lose a life point
+		} else {
+			// Card is not unique or not held by players, destroy from discard pile first
+			foundInDiscard := false
+			for i, cardID := range s.State.DiscardPile {
+				if cardID == p.DiscardCardID {
+					s.State.DiscardPile = append(s.State.DiscardPile[:i], s.State.DiscardPile[i+1:]...)
+					foundInDiscard = true
+					break
+				}
+			}
+
+			// If not in discard pile, destroy from deck
+			if !foundInDiscard {
+				foundInDeck := false
+				for i, cardID := range s.State.HeroDeck {
+					if cardID == p.DiscardCardID {
+						s.State.HeroDeck = append(s.State.HeroDeck[:i], s.State.HeroDeck[i+1:]...)
+						foundInDeck = true
+						break
+					}
+				}
+
+				// If not in deck either, target a random player with the card
+				if !foundInDeck && len(playersWithCard) > 0 {
+					chosenPlayer := playersWithCard[rand.Intn(len(playersWithCard))]
+
+					// Check if deck is empty and try to recycle discard pile
+					if len(s.State.HeroDeck) == 0 {
+						if len(s.State.DiscardPile) > 0 {
+							// Recycle discard pile
+							s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
+							s.State.DiscardPile = nil
+							s.State.PublicDiscard = "" // clear public discard since we're recycling
+
+							// Shuffle the recycled deck
+							rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
+								s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
+							})
+						} else {
+							return errors.New("hero deck empty and no cards to recycle")
+						}
+					}
+
+					// Force the player to draw a new hero
+					s.State.DiscardPile = append(s.State.DiscardPile, chosenPlayer.CurrentHero)
+					chosenPlayer.CurrentHero = s.State.HeroDeck[0]
+					s.State.HeroDeck = s.State.HeroDeck[1:]
+					chosenPlayer.CurrentAlibi = "" // must bluff again
+					chosenPlayer.Life--            // lose a life point (always lose life if holding executed card)
+				}
+			}
+		}
+
+		// Clear public discard if it was the executed card
+		if s.State.PublicDiscard == p.DiscardCardID {
+			s.State.PublicDiscard = ""
+		}
+
+		// Add the card to burned pile (permanently removed from session)
+		s.State.BurnedCards = append(s.State.BurnedCards, p.DiscardCardID)
+
+		return nil
+	})
+}
+
 // keep_gems passive → cancel steal_attempt
 func init() {
 	triggers.Register("steal_attempt", func(s *models.GameSession, ev *triggers.Event, cli *pb.Client) {
 		tgt := findPlayer(s, ev.TargetID)
-		if tgt != nil && hasPassive(s, tgt, "keep_gems", cli) {
+		if tgt != nil && hasPassive(nil, tgt, "keep_gems", cli) {
 			ev.Cancel = true
+		}
+	})
+}
+
+// tribute passive → halve gems gained by other players and send to prince
+func init() {
+	triggers.Register("gems_gained", func(s *models.GameSession, ev *triggers.Event, cli *pb.Client) {
+		// Find the Mad Prince (player with tribute passive)
+		var prince *models.PlayerState
+		for i := range s.State.Players {
+			if hasPassive(nil, &s.State.Players[i], "tribute", cli) {
+				prince = &s.State.Players[i]
+				break
+			}
+		}
+
+		// If prince is alive and gems gained > 1, halve them and send to prince
+		if prince != nil && prince.Life > 0 && ev.Amount > 1 {
+			halvedAmount := ev.Amount / 2
+			prince.Gems += halvedAmount
+			// The original player still gets the full amount (tribute is additional, not replacement)
 		}
 	})
 }
@@ -435,21 +661,9 @@ func init() {
 			if p.ID == ev.ActorID {
 				continue
 			}
-			if hasPassive(s, p, "teamwork", cli) {
+			if hasPassive(nil, p, "teamwork", cli) {
 				p.Gems += ev.Amount
 			}
 		}
 	})
-}
-
-func effectiveStrength(s *models.GameSession, p *models.PlayerState, cli *pb.Client) int {
-	card, err := cli.GetCard(p.CurrentAlibi)
-	if err != nil {
-		return 0
-	}
-	base := card.Strength
-	if p.BonusStrength != 0 {
-		base = p.BonusStrength
-	}
-	return base
 }

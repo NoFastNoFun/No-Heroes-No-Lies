@@ -149,7 +149,9 @@ func (s *SessionService) StartSession(sessionID string) (models.GameSession, err
 	if len(heroDeck) < required {
 		return session, errors.New("not enough hero cards")
 	}
+	burned := heroDeck[:burnCount]
 	heroDeck = heroDeck[burnCount:] // discard burned cards
+	session.State.BurnedCards = burned
 
 	// ── DEAL hero cards ──
 	var playerStates []models.PlayerState

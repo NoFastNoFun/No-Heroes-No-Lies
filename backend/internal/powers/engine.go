@@ -6,6 +6,7 @@ import (
 
 	"no-heroes-no-lies/internal/models"
 	"no-heroes-no-lies/internal/pb"
+	"no-heroes-no-lies/internal/triggers"
 )
 
 /*
@@ -276,35 +277,32 @@ func init() {
 // steal_gem order0
 func init() {
 	register("steal_gem_0", func(
-		s *models.GameSession,
-		a *models.PlayerState,
-		p models.MovePayload,
-		cli *pb.Client,
+		s *models.GameSession, a *models.PlayerState, p models.MovePayload, cli *pb.Client,
 	) error {
 		t := findPlayer(s, p.TargetPlayer)
 		if t == nil || t.Gems == 0 {
 			return errors.New("target empty")
 		}
-		if !canStealGems(s, t, cli) {
-			return errors.New("protected")
+		ev := triggers.Event{
+			Type:     "steal_attempt",
+			ActorID:  a.ID,
+			TargetID: t.ID,
+			Amount:   1,
+		}
+		if triggers.Dispatch(s, &ev, cli) { // keep_gems may cancel
+			return errors.New("steal blocked")
 		}
 
-		// steal 1 gem
+		// success
 		t.Gems--
 		a.Gems++
-
-		// TEAMWORK passive duplicates gain to other players
-		for i := range s.State.Players {
-			pl := &s.State.Players[i]
-			if pl.ID == a.ID {
-				continue
-			}
-			if hasPassive(s, pl, "teamwork", cli) {
-				pl.Gems++
-			}
-		}
+		// teamwork duplicate
+		ev = triggers.Event{Type: "gems_gained", ActorID: a.ID, Amount: 1}
+		triggers.Dispatch(s, &ev, cli)
 		return nil
 	})
+	register("steal_gem_1", Registry["steal_gem_0"])
+
 }
 
 // steal_gem order-1 just reuses the same effect
@@ -416,5 +414,30 @@ func init() {
 		s.State.HeroDeck = s.State.HeroDeck[1:]
 		target.CurrentAlibi = ""
 		return nil
+	})
+}
+
+// keep_gems passive → cancel steal_attempt
+func init() {
+	triggers.Register("steal_attempt", func(s *models.GameSession, ev *triggers.Event, cli *pb.Client) {
+		tgt := findPlayer(s, ev.TargetID)
+		if tgt != nil && hasPassive(s, tgt, "keep_gems", cli) {
+			ev.Cancel = true
+		}
+	})
+}
+
+// teamwork passive → duplicate gems on gems_gained
+func init() {
+	triggers.Register("gems_gained", func(s *models.GameSession, ev *triggers.Event, cli *pb.Client) {
+		for i := range s.State.Players {
+			p := &s.State.Players[i]
+			if p.ID == ev.ActorID {
+				continue
+			}
+			if hasPassive(s, p, "teamwork", cli) {
+				p.Gems += ev.Amount
+			}
+		}
 	})
 }

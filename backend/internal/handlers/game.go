@@ -17,6 +17,7 @@ func RegisterGameRoutes(r chi.Router, svc *services.GameService) {
 	r.Route("/game", func(r chi.Router) {
 		r.Get("/{id}", getSession(svc))
 		r.Post("/{id}/move", postMove(svc))
+		r.Post("/{id}/forfeit", postForfeit(svc))
 	})
 }
 
@@ -57,6 +58,22 @@ func postMove(svc *services.GameService) http.HandlerFunc {
 
 		if err := svc.ApplyMove(sessionID, playerID, payload); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func postForfeit(svc *services.GameService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		playerID, err := auth.PlayerIDFromContext(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), 401)
+			return
+		}
+		sessionID := chi.URLParam(r, "id")
+		if err := svc.Forfeit(sessionID, playerID); err != nil {
+			http.Error(w, err.Error(), 400)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

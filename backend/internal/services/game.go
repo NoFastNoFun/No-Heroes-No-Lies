@@ -8,6 +8,7 @@ import (
 	"no-heroes-no-lies/internal/models"
 	"no-heroes-no-lies/internal/pb"
 	"no-heroes-no-lies/internal/powers"
+	"no-heroes-no-lies/internal/triggers"
 )
 
 // GameService provides game-rule operations.
@@ -420,26 +421,19 @@ func canStealGems(
 }
 
 // giveGems adds gems to receiver and triggers "teamwork" passives.
-func (s *GameService) giveGems(
-	session *models.GameSession,
-	receiver *models.PlayerState,
-	amount int,
-) {
-	if amount <= 0 {
+func (s *GameService) giveGems(session *models.GameSession, recv *models.PlayerState, n int) {
+	if n <= 0 {
 		return
 	}
-	receiver.Gems += amount
+	recv.Gems += n
 
-	// teamwork duplicates to other players who claim teamwork
-	for i := range session.State.Players {
-		pl := &session.State.Players[i]
-		if pl.ID == receiver.ID {
-			continue
-		}
-		if hasPassive(session, pl, "teamwork", s.pbClient) {
-			pl.Gems += amount
-		}
+	// event
+	ev := triggers.Event{
+		Type:    "gems_gained",
+		ActorID: recv.ID,
+		Amount:  n,
 	}
+	triggers.Dispatch(session, &ev, s.pbClient)
 }
 
 func effectiveStrength(
@@ -487,4 +481,50 @@ func (s *GameService) detectOutcome(state *models.GameState) {
 			state.WinnerIDs = coinWinners
 		}
 	}
+}
+
+// Forfeit marks a player as out, triggers win detection.
+func (s *GameService) Forfeit(sessionID, playerID string) error {
+	session, err := s.FetchSession(sessionID)
+	if err != nil {
+		return err
+	}
+	// find player
+	var pl *models.PlayerState
+	for i := range session.State.Players {
+		if session.State.Players[i].ID == playerID {
+			pl = &session.State.Players[i]
+			break
+		}
+	}
+	if pl == nil {
+		return errors.New("not in this game")
+	}
+	if pl.Life == 0 {
+		return errors.New("already out")
+	}
+
+	// mark dead, move to spectators
+	pl.Life = 0
+	session.State.SpectatorIDs = append(session.State.SpectatorIDs, playerID)
+
+	// outcome check
+	s.detectOutcome(&session.State)
+	if session.State.Draw || len(session.State.WinnerIDs) > 0 {
+		session.IsActive = false
+	}
+
+	// persist
+	if err := s.pbClient.UpdateSession(session.ID, session.State, session.IsActive); err != nil {
+		return err
+	}
+
+	// log move
+	move, _ := json.Marshal(map[string]string{"type": "forfeit"})
+	return s.pbClient.InsertMove(models.Move{
+		SessionID: session.ID,
+		PlayerID:  playerID,
+		Type:      "forfeit",
+		Data:      string(move),
+	})
 }

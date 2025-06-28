@@ -41,27 +41,21 @@ func getSession(svc *services.GameService) http.HandlerFunc {
 }
 
 func postMove(svc *services.GameService) http.HandlerFunc {
-	type req struct {
-		PowerID string `json:"power_id"`
-	}
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "id")
-
 		playerID, err := auth.PlayerIDFromContext(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
 
-		var body req
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		var payload models.MovePayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 
-		power := models.Power{ID: body.PowerID}
-		if err := svc.ApplyMove(sessionID, power, playerID); err != nil {
+		if err := svc.ApplyMove(sessionID, playerID, payload); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}

@@ -199,3 +199,61 @@ func (c *Client) ListCards() ([]models.Card, error) {
 	}
 	return r.Items, nil
 }
+
+// InsertMove writes a move record to PocketBase.
+func (c *Client) InsertMove(m models.Move) error {
+	type payload struct {
+		SessionID string `json:"session_id"`
+		PlayerID  string `json:"player_id"`
+		Type      string `json:"type"`
+		Data      string `json:"move_data"`
+	}
+	body, _ := json.Marshal(payload{
+		SessionID: m.SessionID,
+		PlayerID:  m.PlayerID,
+		Type:      m.Type,
+		Data:      m.Data,
+	})
+
+	req, _ := http.NewRequest(
+		"POST",
+		fmt.Sprintf("%s/api/collections/moves/records", c.baseURL),
+		bytes.NewReader(body),
+	)
+	c.withHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return errors.New("failed to insert move")
+	}
+	return nil
+}
+
+func (c *Client) GetCard(id string) (models.Card, error) {
+	var card models.Card
+
+	req, _ := http.NewRequest(
+		"GET",
+		fmt.Sprintf("%s/api/collections/cards/records/%s", c.baseURL, id),
+		nil,
+	)
+	c.withHeaders(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return card, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return card, errors.New("card not found")
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
+		return card, err
+	}
+	return card, nil
+}

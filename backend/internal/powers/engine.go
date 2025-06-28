@@ -441,3 +441,15 @@ func init() {
 		}
 	})
 }
+
+func effectiveStrength(s *models.GameSession, p *models.PlayerState, cli *pb.Client) int {
+	card, err := cli.GetCard(p.CurrentAlibi)
+	if err != nil {
+		return 0
+	}
+	base := card.Strength
+	if p.BonusStrength != 0 {
+		base = p.BonusStrength
+	}
+	return base
+}

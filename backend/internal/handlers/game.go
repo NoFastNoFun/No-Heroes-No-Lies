@@ -21,6 +21,17 @@ func RegisterGameRoutes(r chi.Router, svc *services.GameService) {
 	})
 }
 
+// @Summary Get game session
+// @Description Get current game session state for the authenticated player
+// @Tags game
+// @Accept json
+// @Produce json
+// @Param id path string true "Session ID"
+// @Security BearerAuth
+// @Success 200 {object} view.GameView
+// @Failure 401 {string} string "Unauthorized"
+// @Failure 502 {string} string "Bad Gateway"
+// @Router /game/{id} [get]
 func getSession(svc *services.GameService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		playerID, err := auth.PlayerIDFromContext(r.Context())
@@ -41,6 +52,19 @@ func getSession(svc *services.GameService) http.HandlerFunc {
 	}
 }
 
+// @Summary Make a move
+// @Description Submit a move in the game (demask, fight, or power)
+// @Tags game
+// @Accept json
+// @Produce json
+// @Param id path string true "Session ID"
+// @Param move body models.MovePayload true "Move details"
+// @Security BearerAuth
+// @Success 204 "No Content"
+// @Failure 400 {string} string "Bad Request"
+// @Failure 401 {string} string "Unauthorized"
+// @Failure 403 {string} string "Forbidden"
+// @Router /game/{id}/move [post]
 func postMove(svc *services.GameService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "id")
@@ -64,6 +88,17 @@ func postMove(svc *services.GameService) http.HandlerFunc {
 	}
 }
 
+// @Summary Forfeit game
+// @Description Forfeit the current game session
+// @Tags game
+// @Accept json
+// @Produce json
+// @Param id path string true "Session ID"
+// @Security BearerAuth
+// @Success 204 "No Content"
+// @Failure 400 {string} string "Bad Request"
+// @Failure 401 {string} string "Unauthorized"
+// @Router /game/{id}/forfeit [post]
 func postForfeit(svc *services.GameService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		playerID, err := auth.PlayerIDFromContext(r.Context())

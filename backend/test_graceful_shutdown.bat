@@ -12,7 +12,7 @@ curl -s http://localhost:8080/api/health
 
 echo.
 echo Sending SIGTERM to gracefully shutdown server...
-taskkill /PID %SERVER_PID% /F
+taskkill /PID %SERVER_PID%
 
 echo Server has been gracefully shutdown!
 pause 

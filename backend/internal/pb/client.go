@@ -257,3 +257,27 @@ func (c *Client) GetCard(id string) (models.Card, error) {
 	}
 	return card, nil
 }
+
+func (c *Client) GetPower(id string) (models.Power, error) {
+	var power models.Power
+
+	req, _ := http.NewRequest(
+		"GET",
+		fmt.Sprintf("%s/api/collections/powers/records/%s", c.baseURL, id),
+		nil,
+	)
+	c.withHeaders(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return power, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return power, errors.New("power not found")
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&power); err != nil {
+		return power, err
+	}
+	return power, nil
+}

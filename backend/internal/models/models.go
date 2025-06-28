@@ -19,31 +19,6 @@ type Loot struct {
 	Gems  int `json:"gems"`
 }
 
-// PlayerState lives inside game session state.
-type PlayerState struct {
-	ID           string   `json:"id"`
-	Life         int      `json:"life"`
-	Coins        int      `json:"coins"`
-	Gems         int      `json:"gems"`
-	Glory        int      `json:"glory"`
-	CurrentHero  string   `json:"current_hero"`
-	CurrentAlibi string   `json:"current_alibi"`
-	Hand         []string `json:"hand,omitempty"`
-}
-
-// GameState is the authoritative JSON blob.
-type GameState struct {
-	Players        []PlayerState `json:"players"`
-	TurnOrder      []string      `json:"turn_order"`
-	CurrentTurn    string        `json:"current_turn"`
-	CoinPool       int           `json:"coin_pool"`
-	GemPool        int           `json:"gem_pool"`
-	HeroDeck       []string      `json:"hero_deck"`
-	MonsterDeck    []string      `json:"monster_deck"`
-	ActiveMonsters []string      `json:"active_monsters"`
-	Seed           int64         `json:"seed"`
-}
-
 // GameSession mirrors the PocketBase record we work with.
 type GameSession struct {
 	ID        string    `json:"id"`

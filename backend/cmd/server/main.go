@@ -29,6 +29,7 @@ func main() {
 
 	handlers.RegisterSessionRoutes(r, sessionSvc)
 	handlers.RegisterGameRoutes(r, gameSvc)
+	handlers.RegisterChallengeRoute(r, gameSvc)
 
 	addr := ":" + cfg.Port
 	log.Printf("server listening on %s", addr)

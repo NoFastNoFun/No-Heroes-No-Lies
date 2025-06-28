@@ -15,6 +15,8 @@ type GameService struct {
 	pbClient *pb.Client
 }
 
+const coinWinThreshold = 5
+
 func NewGameService(c *pb.Client) *GameService { return &GameService{pbClient: c} }
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -26,6 +28,17 @@ func nextPlayer(order []string, current string) string {
 		}
 	}
 	return current // fallback (should never hit)
+}
+
+func heroStrength(
+	session *models.GameSession,
+	player *models.PlayerState,
+	card models.Card, // caller's cached hero card
+) int {
+	if player.BonusStrength > 0 {
+		return player.BonusStrength
+	}
+	return card.Strength
 }
 
 // ── public API ─────────────────────────────────────────────────────────────
@@ -68,6 +81,9 @@ func (s *GameService) ApplyMove(
 
 	// advance turn
 	session.State.CurrentTurn = nextPlayer(session.State.TurnOrder, playerID)
+
+	// detect game outcome
+	s.detectOutcome(&session.State)
 
 	// persist
 	if err := s.pbClient.UpdateSession(session.ID, session.State, session.IsActive); err != nil {
@@ -158,7 +174,8 @@ func (s *GameService) handleFight(
 
 	actor.CurrentAlibi = p.DeclaredAlibi
 
-	heroLost := monsterCard.Strength > heroCard.Strength
+	heroStr := heroStrength(session, actor, heroCard)
+	heroLost := monsterCard.Strength > heroStr
 	var coinsDelta, gemsDelta, lifeDelta int
 
 	if heroLost {
@@ -198,6 +215,14 @@ func (s *GameService) handleFight(
 		LifeDeltaID:   actor.ID,
 		LifeDelta:     lifeDelta,
 		ExpiresAt:     time.Now().Add(5 * time.Second).UnixMilli(),
+	}
+
+	// After first monster resolution, process second if session.State.DualAttack:
+	if session.State.DualAttack && len(session.State.ActiveMonsters) > 0 {
+		session.State.DualAttack = false
+		p.MonsterID = session.State.ActiveMonsters[0]
+		// recursive one-more fight (reuse same logic)
+		return s.handleFight(session, playerID, p)
 	}
 	return nil
 }
@@ -301,6 +326,10 @@ func (s *GameService) ResolveChallenge(
 	}
 
 	session.State.LastMove = nil
+
+	// detect game outcome
+	s.detectOutcome(&session.State)
+
 	return s.pbClient.UpdateSession(session.ID, session.State, session.IsActive)
 }
 
@@ -362,8 +391,15 @@ func (s *GameService) applyTurnStartPassives(session *models.GameSession) {
 		return
 	}
 
-	// alternate_strength: flip 1 ↔ 7 each turn if the declared alibi has that passive
+	// Detect once: does declared alibi own alternate_strength?
 	if hasPassive(session, p, "alternate_strength", s.pbClient) {
+		p.AltStrength = true
+	} else {
+		p.AltStrength = false
+		p.BonusStrength = 0 // reset if no longer claiming that hero
+	}
+
+	if p.AltStrength {
 		if p.BonusStrength == 1 {
 			p.BonusStrength = 7
 		} else {
@@ -374,10 +410,10 @@ func (s *GameService) applyTurnStartPassives(session *models.GameSession) {
 
 func canStealGems(
 	session *models.GameSession,
-	target *models.PlayerState,
-	pbCli *pb.Client,
+	tgt *models.PlayerState,
+	cli *pb.Client,
 ) bool {
-	return !hasPassive(session, target, "keep_gems", pbCli)
+	return !hasPassive(session, tgt, "keep_gems", cli)
 }
 
 // giveGems adds gems to receiver and triggers "teamwork" passives.
@@ -391,15 +427,61 @@ func (s *GameService) giveGems(
 	}
 	receiver.Gems += amount
 
-	// Teamwork passive: every *other* player whose alibi hero has "teamwork"
-	// also gains the same amount.
+	// teamwork duplicates to other players who claim teamwork
 	for i := range session.State.Players {
-		p := &session.State.Players[i]
-		if p.ID == receiver.ID {
+		pl := &session.State.Players[i]
+		if pl.ID == receiver.ID {
 			continue
 		}
-		if hasPassive(session, p, "teamwork", s.pbClient) {
-			p.Gems += amount
+		if hasPassive(session, pl, "teamwork", s.pbClient) {
+			pl.Gems += amount
+		}
+	}
+}
+
+func effectiveStrength(
+	session *models.GameSession,
+	player *models.PlayerState,
+	pbCli *pb.Client,
+) int {
+	card, err := pbCli.GetCard(player.CurrentAlibi)
+	if err != nil {
+		return 0
+	}
+	base := card.Strength
+	if player.BonusStrength != 0 {
+		base = player.BonusStrength
+	}
+	return base
+}
+
+func (s *GameService) detectOutcome(state *models.GameState) {
+	if state.Draw || len(state.WinnerIDs) > 0 {
+		return // already ended
+	}
+
+	var alive []*models.PlayerState
+	for i := range state.Players {
+		if state.Players[i].Life > 0 {
+			alive = append(alive, &state.Players[i])
+		}
+	}
+
+	switch {
+	case len(alive) == 0: // everyone died same turn
+		state.Draw = true
+	case len(alive) == 1:
+		state.WinnerIDs = []string{alive[0].ID}
+	default:
+		// coin victory check
+		var coinWinners []string
+		for _, p := range alive {
+			if p.Coins >= coinWinThreshold {
+				coinWinners = append(coinWinners, p.ID)
+			}
+		}
+		if len(coinWinners) > 0 {
+			state.WinnerIDs = coinWinners
 		}
 	}
 }

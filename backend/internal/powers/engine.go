@@ -122,27 +122,31 @@ func init() {
 
 // fight_player_with_discarded_card - strength duel with discarded hero
 func init() {
-	register("fight_player_with_discarded_card", func(s *models.GameSession, a *models.PlayerState, p models.MovePayload, pbCli *pb.Client) error {
-		if p.TargetPlayer == "" || p.DiscardCardID == "" {
-			return errors.New("need target_player & discarded_card_id")
-		}
-		target := findPlayer(s, p.TargetPlayer)
-		if target == nil {
-			return errors.New("target not found")
-		}
-		discardCard, err := pbCli.GetCard(p.DiscardCardID)
-		if err != nil {
-			return err
-		}
-		str := discardCard.Strength + a.BonusStrength
-		a.BonusStrength = 0 // reset buff
-		if str > targetBonusStrength(target) {
-			target.Life--
-		} else {
-			a.Life--
-		}
-		return nil
-	})
+	register("fight_player_with_discarded_card",
+		func(s *models.GameSession, a *models.PlayerState, p models.MovePayload, cli *pb.Client) error {
+
+			t := findPlayer(s, p.TargetPlayer)
+			if t == nil {
+				return errors.New("target not found")
+			}
+			if p.DiscardCardID == "" {
+				return errors.New("discard_card_id missing")
+			}
+			card, err := cli.GetCard(p.DiscardCardID)
+			if err != nil {
+				return err
+			}
+			att := card.Strength + a.BonusStrength
+			a.BonusStrength = 0
+
+			def := effectiveStrength(s, t, cli)
+			if att > def {
+				t.Life--
+			} else {
+				a.Life--
+			}
+			return nil
+		})
 }
 
 func targetBonusStrength(p *models.PlayerState) int { return 0 } // placeholder
@@ -239,27 +243,34 @@ func init() {
 
 // shoot_player
 func init() {
-	register("shoot_player", func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, _ *pb.Client) error {
-		target := findPlayer(s, p.TargetPlayer)
-		if target == nil {
-			return errors.New("target not found")
-		}
-		if p.GuessHero == "" {
-			return errors.New("guess required")
-		}
-		if target.CurrentHero == p.GuessHero {
-			target.Life--
-		}
-		return nil
-	})
+	register("shoot_player",
+		func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, _ *pb.Client) error {
+
+			t := findPlayer(s, p.TargetPlayer)
+			if t == nil {
+				return errors.New("target not found")
+			}
+			ok := (p.GuessHero != "" && p.GuessHero == t.CurrentHero)
+			if ok {
+				t.Life--
+			}
+			s.State.LastShootOK = ok
+			return nil
+		})
+
 }
 
 // all_in
 func init() {
-	register("all_in", func(_ *models.GameSession, a *models.PlayerState, _ models.MovePayload, _ *pb.Client) error {
-		a.Gems *= 2 // doubled by caller only if last shoot was correct; handled in service layer
-		return nil
-	})
+	register("all_in",
+		func(s *models.GameSession, a *models.PlayerState, _ models.MovePayload, _ *pb.Client) error {
+			if !s.State.LastShootOK {
+				a.Gems = 0
+				return nil
+			}
+			a.Gems *= 2
+			return nil
+		})
 }
 
 // steal_gem order0
@@ -328,22 +339,32 @@ func init() {
 
 // mimic_hero
 func init() {
-	register("mimic_hero", func(s *models.GameSession, a *models.PlayerState, p models.MovePayload, pbCli *pb.Client) error {
-		target := findPlayer(s, p.TargetPlayer)
-		if target == nil {
-			return errors.New("target not found")
-		}
-		cardID := target.CurrentAlibi
-		if p.GuessHero == target.CurrentHero {
-			cardID = target.CurrentHero
-		}
-		card, err := pbCli.GetCard(cardID)
-		if err != nil {
-			return err
-		}
-		a.BonusStrength = card.Strength
-		return nil
-	})
+	register("mimic_power",
+		func(s *models.GameSession, a *models.PlayerState, p models.MovePayload, cli *pb.Client) error {
+			t := findPlayer(s, p.TargetPlayer)
+			if t == nil {
+				return errors.New("target?")
+			}
+			card, err := cli.GetCard(t.CurrentHero)
+			if err != nil {
+				return err
+			}
+			if len(card.PowerIDs) == 0 {
+				return errors.New("target hero has no powers")
+			}
+			pw, err := cli.GetPower(card.PowerIDs[0]) // order-0
+			if err != nil {
+				return err
+			}
+			if pw.Type == "passive" {
+				return errors.New("target power is passive")
+			}
+			eff, ok := Registry[pw.Action]
+			if !ok {
+				return errors.New("copied power unimplemented")
+			}
+			return eff(s, a, p, cli) // reuse same payload
+		})
 }
 
 // mimic_power
@@ -355,10 +376,11 @@ func init() {
 
 // dual_attack
 func init() {
-	register("dual_attack", func(s *models.GameSession, _ *models.PlayerState, _ models.MovePayload, _ *pb.Client) error {
-		s.State.DualAttack = true // flag for fight handler
-		return nil
-	})
+	register("dual_attack",
+		func(s *models.GameSession, _ *models.PlayerState, _ models.MovePayload, _ *pb.Client) error {
+			s.State.DualAttack = true
+			return nil
+		})
 }
 
 // blind_draw

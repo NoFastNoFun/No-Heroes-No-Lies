@@ -11,6 +11,7 @@ type LastMove struct {
 	LifeDeltaID   string `json:"life_delta_id"` // whose life changed
 	LifeDelta     int    `json:"life_delta"`    // −1 or +0
 	ExpiresAt     int64  `json:"expires_at"`    // unix ms
+	Correct       bool   `json:"correct"`
 }
 
 // GameState …
@@ -27,5 +28,9 @@ type GameState struct {
 	LastMove       *LastMove       `json:"last_move,omitempty"`
 	DiscardPile    []string        `json:"discard_pile,omitempty"`   // discarded hero cards (non-burned)
 	Order0UsedBy   map[string]bool `json:"order0_used_by,omitempty"` // tracks who used order-0 power this turn
-	DualAttack     bool            `json:"dual_attack"`              // flag set by dual_attack power
+	DualAttack     bool            `json:"dual_attack"`
+	LastShootOK    bool            `json:"last_shoot_ok"`         // flag set by dual_attack power
+	WinnerIDs      []string        `json:"winner_ids,omitempty"`  // empty until game ends
+	Draw           bool            `json:"draw"`                  // true if stalemate
+	PauseVotes     map[string]bool `json:"pause_votes,omitempty"` // future pause/cancel feature
 }

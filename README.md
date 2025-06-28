@@ -1,91 +1,77 @@
 # No Heroes No Lies - Custom Game Server
 
-Authoritative backend that enforces **all** rules for the multiplayer bluff-and-battle card game **"No Heroes No Lies."**  
-Runs beside **PocketBase** (Auth + DB + Realtime) and is deployed with **Coolify** on our VPS.
+Authoritative backend for the multiplayer bluff-and-battle card game **"No Heroes No Lies."**  
+Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** on our VPS.
 
 ---
 
-## 🎯 Purpose
+## Purpose
 
-| Goals | Details |
-|-------|---------|
-| **Fair play** | Validate every move, enforce costs, turn order, passives, challenges, win conditions |
-| **Persistence** | Store authoritative state in PocketBase (`game_sessions`, `moves`, …) |
-| **Simple API** | Lightweight HTTP endpoints (`/game`, `/move`, …) consumable by any web/mobile client |
-| **Zero trust** | Clients never see hidden cards or decks; server derives per-player "sanitized" views |
+| Goal | Details |
+|------|---------|
+| **Fair play** | Validate every move, enforce costs, turn order, passives, lie-challenges, win rules |
+| **Persistence** | Persist authoritative state in PocketBase (`game_sessions`, `moves`, ...) |
+| **Simple API** | Lightweight HTTP endpoints (`/game`, `/move`, ...) for any web / mobile client |
+| **Zero-trust** | Clients only receive per-player "sanitized" views - hidden cards & decks stay server-side |
 
 ---
 
-## ⚙️ Architecture
+## Architecture
 
 | Layer | Responsibility |
 |-------|----------------|
-| **PocketBase** | Accounts (`games_accounts`), collections (`cards`, `powers`, `game_sessions`, `moves`), realtime feeds |
-| **Go server** | All game logic, power engine, host-gate, AO_KEY header, health probe |
-| **Front-end** | Calls the API, listens to PB realtime, renders UI |
+| **PocketBase** | Collections (`games_accounts`, `cards`, `powers`, `game_sessions`, `moves`), realtime streams |
+| **Go server**  | Game logic, lobby, power engine, AO_KEY header, host-gate, `/api/health` |
+| **Front-end**  | REST calls to server, realtime updates from PocketBase |
 
-*Server → PocketBase requests always include `AO_KEY`; no admin token needed.*
+*Every server -> PB call includes **AO_KEY**; no admin token required.*
 
 ---
 
-## ✅ Current Feature Matrix
+## Feature Matrix
 
 | Area | Status | Highlights |
 |------|--------|------------|
-| **Infrastructure** | ✅ | Host filter, AO_KEY header, JWT auth middleware, `/api/health` |
-| **Session lifecycle** | ✅ | Create, join, start, deck build, burn, initial deal, random first player |
-| **Moves & logging** | ✅ | `demask`, `fight`, full **26-power** registry, move audit in `moves` |
-| **Challenge window** | ✅ | 5-second lie challenge with full rollback |
-| **Passives** | 🟡 | `alternate_strength`, `teamwork`, `keep_gems` implemented; hook helpers in place |
-| **Combat & loot** | ✅ | Strength compare, loot payout, deck refill, dual-attack support |
-| **Cost & order chains** | ✅ | Gem deduction and order-0/1 enforcement |
-| **Anti-cheat view** | ✅ | `/game/{id}` returns player-specific sanitized JSON |
-| **Docker / Coolify** | ✅ | Static binary, AO_KEY/Host env vars, health-check |
+| **Infrastructure** | OK | Host filter, AO_KEY header, JWT auth, health probe |
+| **Lobby system**   | OK | Join/leave before start, per-player **Ready/Not-ready**, start only when everyone ready, late joiners become **spectators** |
+| **Session lifecycle** | OK | Create -> join -> start (2-15 players), deck build, burn, deal, random first player |
+| **Moves & powers** | OK | `demask`, `fight`, full **26 active powers** + 3 passives, order-chain & cost enforcement, audit in `moves` |
+| **Challenge window** | OK | 5-second lie challenge with rollback |
+| **Passives implemented** | OK | `alternate_strength`, `teamwork`, `keep_gems` (alibi-based) |
+| **Combat & loot**  | OK | Strength compare, loot payout via teamwork, dual-attack flag |
+| **Win detection**  | OK | Auto-end: last survivor **or** >= 5 coins; draw if everyone KO same turn |
+| **Spectators**     | OK | `/join?spectator=1` after start; spectators cannot act |
+| **Sanitized view** | OK | `/game/{id}` returns only info the caller is allowed to see |
+| **Docker / Coolify** | OK | Multi-stage image, env vars, health-check endpoint |
 
 ---
 
-## 🗂️ What's Left
+## Remaining Work
 
-| Task Group | Remaining Work |
-|------------|----------------|
-| **API polish** | `POST /game` & `POST /game/{id}/forfeit` (public endpoints already scaffolded) |
-| **Passive triggers (full)** | • Hook "teamwork" into **coin** gains • Add event hook map for future triggers (`on_steal_attempt`, `monster_slain`, etc.) |
-| **Mimic & complex powers** | Finish `mimic_power` (copy target's order-0 active) and any TODO stubs |
-| **Win / lose conditions** | • First to 4 glory **or** last player with life > 0 ends game • Persist winner in session |
-| **Realtime fan-out** | Use PB realtime or lightweight WS push after each state update |
-| **Graceful shutdown** | Capture SIGTERM, close HTTP server cleanly |
-| **Testing** | Unit tests for power engine & challenge logic; integration tests with PB dev instance |
-| **CI / lint** | GitHub or Coolify pipeline: `go vet`, `go test`, Docker build |
-| **Docs** | API schema (OpenAPI or markdown) for client developers |
+| Group | To-do |
+|-------|-------|
+| **API polish** | `POST /game` (create lobby) & `/game/{id}/forfeit` finalise docs / errors |
+| **Passive triggers (full)** | Add future triggers (`on_steal_attempt`, `monster_slain`, etc.) |
+| **Realtime fan-out** | Push websocket / PB subscription hints when game ends or state updates |
+| **Graceful shutdown** | Catch SIGTERM, drain connections |
+| **Testing & CI** | Unit tests for power engine and challenge logic; GitHub/Coolify pipeline (`go vet`, `go test`, Docker build) |
+| **Docs** | Public API schema (OpenAPI or MD) for client app |
 
 ---
 
-## 🛣️ Next Suggested Milestone
-
-> **Win-Detection & Game-End:**  
-> • track glory points on monster slay / duel victory  
-> • check win condition after every state change  
-> • mark `is_active=false`, declare winner(s), push realtime event.
-
-Once that's in place the game loop is complete; later tasks are quality-of-life (realtime polish, tests, CI).
-
----
-
-## 📌 Running Locally
+## Running Locally
 
 ```bash
-# build and run
 docker build -t nhnl .
-docker run -e PORT=8080 \
+docker run -p 8080:8080 \
+           -e PORT=8080 \
            -e POCKETBASE_URL=http://localhost:8090 \
-           -e POCKETBASE_AO_KEY=YOUR_SECRET \
+           -e POCKETBASE_AO_KEY=supersecret \
            -e ALLOWED_DOMAIN_SUFFIX=.example.com \
-           -p 8080:8080 nhnl
-````
+           nhnl
+```
 
----
-
-Clients authenticate with their PocketBase JWT:
+Clients authenticate with PocketBase JWT:
 
 ```http
 POST /game/{id}/move
@@ -93,6 +79,6 @@ Authorization: Bearer <PB-JWT>
 Content-Type: application/json
 ```
 
-and listen to PocketBase realtime channel `game_sessions/{id}` for live updates.
+and subscribe to `game_sessions/{id}` via PocketBase realtime for live updates.
 
-Happy bluffing! 🎲
+Happy bluffing

@@ -96,6 +96,28 @@ func canStealGems(
 	return !hasPassive(nil, target, "keep_gems", cli)
 }
 
+// Helper: ensure hero deck is not empty, recycling discard pile if needed
+func ensureHeroDeckNotEmpty(s *models.GameSession, rng *rand.Rand) error {
+	if len(s.State.HeroDeck) == 0 {
+		if len(s.State.DiscardPile) > 0 {
+			s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
+			s.State.DiscardPile = nil
+			s.State.PublicDiscard = "" // clear public discard since we're recycling
+			rng.Shuffle(len(s.State.HeroDeck), func(i, j int) {
+				s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
+			})
+		} else {
+			return errors.New("hero deck empty and no cards to recycle")
+		}
+	}
+	return nil
+}
+
+// Helper: get per-session rand.Rand seeded from session.State.Seed
+func sessionRand(s *models.GameSession) *rand.Rand {
+	return rand.New(rand.NewSource(s.State.Seed))
+}
+
 // ------------------------------------------------------------------
 // ACTIVE POWERS (order 0 / 1)
 // ------------------------------------------------------------------
@@ -184,30 +206,14 @@ func init() {
 // change_hero - draw new hero, discard current
 func init() {
 	register("change_hero", func(s *models.GameSession, a *models.PlayerState, _ models.MovePayload, _ *pb.Client) error {
-		// Check if deck is empty and try to recycle discard pile
-		if len(s.State.HeroDeck) == 0 {
-			if len(s.State.DiscardPile) > 0 {
-				// Recycle discard pile
-				s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
-				s.State.DiscardPile = nil
-				s.State.PublicDiscard = "" // clear public discard since we're recycling
-
-				// Shuffle the recycled deck
-				rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
-					s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
-				})
-			} else {
-				return errors.New("hero deck empty and no cards to recycle")
-			}
+		rng := sessionRand(s)
+		if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+			return err
 		}
-
-		// Discard current hero to public discard pile
 		if a.CurrentHero != "" {
 			s.State.DiscardPile = append(s.State.DiscardPile, a.CurrentHero)
 			s.State.PublicDiscard = a.CurrentHero
 		}
-
-		// Draw new hero
 		a.CurrentHero = s.State.HeroDeck[0]
 		s.State.HeroDeck = s.State.HeroDeck[1:]
 		return nil
@@ -415,28 +421,14 @@ func init() {
 // blind_draw
 func init() {
 	register("blind_draw", func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, _ *pb.Client) error {
+		rng := sessionRand(s)
+		if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+			return err
+		}
 		target := findPlayer(s, p.TargetPlayer)
 		if target == nil {
 			return errors.New("target not found")
 		}
-
-		// Check if deck is empty and try to recycle discard pile
-		if len(s.State.HeroDeck) == 0 {
-			if len(s.State.DiscardPile) > 0 {
-				// Recycle discard pile
-				s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
-				s.State.DiscardPile = nil
-				s.State.PublicDiscard = "" // clear public discard since we're recycling
-
-				// Shuffle the recycled deck
-				rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
-					s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
-				})
-			} else {
-				return errors.New("deck empty and no cards to recycle")
-			}
-		}
-
 		s.State.DiscardPile = append(s.State.DiscardPile, target.CurrentHero)
 		target.CurrentHero = s.State.HeroDeck[0]
 		s.State.HeroDeck = s.State.HeroDeck[1:]
@@ -448,28 +440,14 @@ func init() {
 // force_transform
 func init() {
 	register("force_transform", func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, _ *pb.Client) error {
+		rng := sessionRand(s)
+		if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+			return err
+		}
 		target := findPlayer(s, p.TargetPlayer)
 		if target == nil {
 			return errors.New("target not found")
 		}
-
-		// Check if deck is empty and try to recycle discard pile
-		if len(s.State.HeroDeck) == 0 {
-			if len(s.State.DiscardPile) > 0 {
-				// Recycle discard pile
-				s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
-				s.State.DiscardPile = nil
-				s.State.PublicDiscard = "" // clear public discard since we're recycling
-
-				// Shuffle the recycled deck
-				rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
-					s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
-				})
-			} else {
-				return errors.New("deck empty and no cards to recycle")
-			}
-		}
-
 		s.State.DiscardPile = append(s.State.DiscardPile, target.CurrentHero)
 		target.CurrentHero = s.State.HeroDeck[0]
 		s.State.HeroDeck = s.State.HeroDeck[1:]
@@ -481,6 +459,7 @@ func init() {
 // execution - burn a hero card permanently from the session
 func init() {
 	register("execution", func(s *models.GameSession, _ *models.PlayerState, p models.MovePayload, cli *pb.Client) error {
+		rng := sessionRand(s)
 		if p.DiscardCardID == "" {
 			return errors.New("discard_card_id required for execution")
 		}
@@ -527,36 +506,24 @@ func init() {
 		}
 
 		// If card is unique and held by a player, they lose life and card
+		cardExecuted := false
 		if isUnique && len(playersWithCard) > 0 {
 			// Randomly choose one player if multiple have the same card
 			chosenPlayer := playersWithCard[0]
 			if len(playersWithCard) > 1 {
-				chosenPlayer = playersWithCard[rand.Intn(len(playersWithCard))]
+				chosenPlayer = playersWithCard[rng.Intn(len(playersWithCard))]
 			}
 
-			// Check if deck is empty and try to recycle discard pile
-			if len(s.State.HeroDeck) == 0 {
-				if len(s.State.DiscardPile) > 0 {
-					// Recycle discard pile
-					s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
-					s.State.DiscardPile = nil
-					s.State.PublicDiscard = "" // clear public discard since we're recycling
-
-					// Shuffle the recycled deck
-					rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
-						s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
-					})
-				} else {
-					return errors.New("hero deck empty and no cards to recycle")
-				}
+			if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+				return err
 			}
 
-			// Force the player to draw a new hero
 			s.State.DiscardPile = append(s.State.DiscardPile, chosenPlayer.CurrentHero)
 			chosenPlayer.CurrentHero = s.State.HeroDeck[0]
 			s.State.HeroDeck = s.State.HeroDeck[1:]
 			chosenPlayer.CurrentAlibi = "" // must bluff again
 			chosenPlayer.Life--            // lose a life point
+			cardExecuted = true
 		} else {
 			// Card is not unique or not held by players, destroy from discard pile first
 			foundInDiscard := false
@@ -564,6 +531,7 @@ func init() {
 				if cardID == p.DiscardCardID {
 					s.State.DiscardPile = append(s.State.DiscardPile[:i], s.State.DiscardPile[i+1:]...)
 					foundInDiscard = true
+					cardExecuted = true
 					break
 				}
 			}
@@ -575,48 +543,36 @@ func init() {
 					if cardID == p.DiscardCardID {
 						s.State.HeroDeck = append(s.State.HeroDeck[:i], s.State.HeroDeck[i+1:]...)
 						foundInDeck = true
+						cardExecuted = true
 						break
 					}
 				}
 
 				// If not in deck either, target a random player with the card
 				if !foundInDeck && len(playersWithCard) > 0 {
-					chosenPlayer := playersWithCard[rand.Intn(len(playersWithCard))]
+					chosenPlayer := playersWithCard[rng.Intn(len(playersWithCard))]
 
-					// Check if deck is empty and try to recycle discard pile
-					if len(s.State.HeroDeck) == 0 {
-						if len(s.State.DiscardPile) > 0 {
-							// Recycle discard pile
-							s.State.HeroDeck = append(s.State.HeroDeck, s.State.DiscardPile...)
-							s.State.DiscardPile = nil
-							s.State.PublicDiscard = "" // clear public discard since we're recycling
-
-							// Shuffle the recycled deck
-							rand.Shuffle(len(s.State.HeroDeck), func(i, j int) {
-								s.State.HeroDeck[i], s.State.HeroDeck[j] = s.State.HeroDeck[j], s.State.HeroDeck[i]
-							})
-						} else {
-							return errors.New("hero deck empty and no cards to recycle")
-						}
+					if err := ensureHeroDeckNotEmpty(s, rng); err != nil {
+						return err
 					}
 
-					// Force the player to draw a new hero
 					s.State.DiscardPile = append(s.State.DiscardPile, chosenPlayer.CurrentHero)
 					chosenPlayer.CurrentHero = s.State.HeroDeck[0]
 					s.State.HeroDeck = s.State.HeroDeck[1:]
 					chosenPlayer.CurrentAlibi = "" // must bluff again
 					chosenPlayer.Life--            // lose a life point (always lose life if holding executed card)
+					cardExecuted = true
 				}
 			}
 		}
 
-		// Clear public discard if it was the executed card
 		if s.State.PublicDiscard == p.DiscardCardID {
 			s.State.PublicDiscard = ""
 		}
 
-		// Add the card to burned pile (permanently removed from session)
-		s.State.BurnedCards = append(s.State.BurnedCards, p.DiscardCardID)
+		if cardExecuted {
+			s.State.BurnedCards = append(s.State.BurnedCards, p.DiscardCardID)
+		}
 
 		return nil
 	})

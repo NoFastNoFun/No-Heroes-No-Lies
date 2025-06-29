@@ -26,6 +26,7 @@ import (
 	"no-heroes-no-lies/internal/services"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/cors"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
@@ -37,11 +38,25 @@ func main() {
 	sessionSvc := services.NewSessionService(pbClient)
 
 	r := chi.NewRouter()
+
+	// CORS middleware
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:3000"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+
 	r.Use(hostfilter.Middleware(cfg.AllowedDomainSuffix))
-	r.Use(auth.Middleware(pbClient))
 
 	r.Get("/api/health", handlers.HealthHandler)
 	r.Get("/api/health/slow", handlers.SlowHealthHandler)
+
+	// Auth routes (no auth required)
+	r.Post("/api/auth/login", handlers.LoginHandler(pbClient))
+	r.Post("/api/auth/register", handlers.RegisterHandler(pbClient))
 
 	// OpenAPI documentation
 	r.Get("/swagger/*", httpSwagger.Handler(
@@ -51,9 +66,14 @@ func main() {
 		http.ServeFile(w, r, "docs/swagger.json")
 	})
 
-	handlers.RegisterSessionRoutes(r, sessionSvc)
-	handlers.RegisterGameRoutes(r, gameSvc)
-	handlers.RegisterChallengeRoute(r, gameSvc)
+	// Protected routes (require JWT auth)
+	r.Group(func(r chi.Router) {
+		r.Use(auth.Middleware())
+		handlers.RegisterSessionRoutes(r, sessionSvc)
+		handlers.RegisterGameRoutes(r, gameSvc)
+		handlers.RegisterChallengeRoute(r, gameSvc)
+		handlers.RegisterCardsRoutes(r, pbClient)
+	})
 
 	// Create HTTP server
 	addr := ":" + cfg.Port

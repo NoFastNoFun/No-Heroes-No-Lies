@@ -16,7 +16,7 @@ func Load() Config {
 		Port:                getenv("PORT", "8080"),
 		PocketBaseURL:       getenv("POCKETBASE_URL", "http://localhost:8090"),
 		PocketBaseAOKey:     getenv("POCKETBASE_AO_KEY", ""),
-		AllowedDomainSuffix: getenv("ALLOWED_DOMAIN_SUFFIX", ".no-heroes-no-lies.com"),
+		AllowedDomainSuffix: getenv("ALLOWED_DOMAIN_SUFFIX", "localhost:8080"),
 	}
 }
 

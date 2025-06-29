@@ -1,0 +1,33 @@
+{
+  "server": {
+    "port": 8080,
+    "host": "0.0.0.0",
+    "max_players": 8,
+    "graceful_shutdown_timeout": 10.0
+  },
+  "database": {
+    "pocketbase_url": "http://localhost:8090",
+    "pocketbase_admin_key": "",
+    "connection_timeout": 30.0
+  },
+  "auth": {
+    "jwt_secret": "your-secret-key-change-in-production",
+    "token_expiry_hours": 24,
+    "refresh_token_expiry_days": 7
+  },
+  "cors": {
+    "allowed_origins": ["http://localhost:3000", "http://localhost:8080"],
+    "allowed_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    "allowed_headers": [
+      "Accept",
+      "Authorization",
+      "Content-Type",
+      "X-CSRF-Token"
+    ]
+  },
+  "game": {
+    "session_timeout_minutes": 30,
+    "move_challenge_window_seconds": 5,
+    "max_spectators": 4
+  }
+}

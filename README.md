@@ -20,9 +20,9 @@ Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** o
 
 | Layer | Responsibility |
 |-------|----------------|
-| **PocketBase** | Collections (`games_accounts`, `cards`, `powers`, `game_sessions`, `moves`), realtime streams |
+| **PocketBase** | Collections (`users`, `game_sessions`, `moves`), authentication, realtime streams |
 | **Go server**  | Game logic, lobby, power engine, AO_KEY header, host-gate, `/api/health` |
-| **Front-end**  | REST calls to server, realtime updates from PocketBase |
+| **React Frontend** | Modern web interface with PocketBase authentication and game sessions |
 
 *Every server -> PB call includes **AO_KEY**; no admin token required.*
 
@@ -43,6 +43,7 @@ Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** o
 | **Spectators**     | OK | `/join?spectator=1` after start; spectators cannot act |
 | **Sanitized view** | OK | `/game/{id}` returns only info the caller is allowed to see |
 | **Docker / Coolify** | OK | Multi-stage image, env vars, health-check endpoint |
+| **React Frontend** | ✅ NEW | Modern UI with PocketBase authentication, lobby system, and game session management |
 
 ---
 
@@ -56,10 +57,70 @@ Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** o
 | **Graceful shutdown** | Catch SIGTERM, drain connections |
 | **Testing & CI** | Unit tests for power engine and challenge logic; GitHub/Coolify pipeline (`go vet`, `go test`, Docker build) |
 | **Docs** | Public API schema (OpenAPI or MD) for client app |
+| **Game Interface** | Implement the actual game UI when design is finalized |
 
 ---
 
-## Running Locally
+## Quick Start
+
+### Prerequisites
+
+- Go 1.21+
+- Node.js 16+
+- PocketBase server running on `http://localhost:8090`
+
+### Option 1: Development Scripts
+
+**Windows:**
+
+```cmd
+start-dev.bat
+```
+
+**Linux/macOS:**
+
+```bash
+chmod +x start-dev.sh
+./start-dev.sh
+```
+
+This will start both the backend server and frontend development server.
+
+### Option 2: Manual Start
+
+1. **Start PocketBase:**
+
+```bash
+# Download and run PocketBase
+./pocketbase serve
+```
+
+2. **Start Backend:**
+
+```bash
+cd backend
+go run ./cmd/server/main.go
+```
+
+3. **Start Frontend:**
+
+```bash
+cd frontend
+# Create .env file with your configuration
+echo "VITE_POCKETBASE_URL=http://localhost:8090" > .env
+echo "VITE_API_URL=http://localhost:8080" >> .env
+npm install
+npm run dev
+```
+
+4. **Access the Application:**
+
+- Frontend: <http://localhost:3000>
+- Backend API: <http://localhost:8080>
+- PocketBase Admin: <http://localhost:8090/_/>
+- API Documentation: <http://localhost:8080/swagger/>
+
+### Option 3: Docker (Backend Only)
 
 ```bash
 docker build -t nhnl .
@@ -70,6 +131,41 @@ docker run -p 8080:8080 \
            -e ALLOWED_DOMAIN_SUFFIX=.example.com \
            nhnl
 ```
+
+---
+
+## Frontend Features
+
+The new React frontend includes:
+
+- **Real Authentication**: PocketBase-based user registration and login
+- **Lobby System**: Browse and join available games from PocketBase
+- **Game Sessions**: Create new games and manage sessions
+- **Ready System**: Players can mark themselves as ready
+- **Game Interface**: Placeholder for the actual game UI
+- **Modern UI**: Built with React, TypeScript, and Tailwind CSS
+
+### Frontend Tech Stack
+
+- React 18 with TypeScript
+- Vite for fast development
+- React Router for navigation
+- Tailwind CSS for styling
+- Axios for API communication
+- PocketBase SDK for authentication
+- Lucide React for icons
+
+### Authentication Flow
+
+1. **Registration**: Users create accounts with email, username, and password
+2. **Login**: Users authenticate with email and password
+3. **Token Management**: PocketBase handles JWT tokens automatically
+4. **Protected Routes**: All game routes require authentication
+5. **Auto-login**: Auth state persists across page reloads
+
+---
+
+## API Usage
 
 Clients authenticate with PocketBase JWT:
 

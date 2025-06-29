@@ -60,7 +60,7 @@ func (c *Client) FetchSession(id string) (models.GameSession, error) {
 	return session, nil
 }
 
-// VerifyUserToken hits the auth-refresh route and returns the user ID on success.
+// VerifyUserToken verifies a user token and returns the user ID on success.
 func (c *Client) VerifyUserToken(userToken string) (string, error) {
 	type respBody struct {
 		Record struct {
@@ -68,7 +68,8 @@ func (c *Client) VerifyUserToken(userToken string) (string, error) {
 		} `json:"record"`
 	}
 
-	url := fmt.Sprintf("%s/api/collections/games_accounts/auth-refresh", c.baseURL)
+	// Use the auth-verify endpoint instead of auth-refresh for token verification
+	url := fmt.Sprintf("%s/api/collections/games_accounts/auth-verify", c.baseURL)
 
 	req, _ := http.NewRequest("POST", url, nil)
 	req.Header.Set("Authorization", "Bearer "+userToken)
@@ -81,7 +82,21 @@ func (c *Client) VerifyUserToken(userToken string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", errors.New("token verification failed")
+		// Try auth-refresh as fallback for backward compatibility
+		url = fmt.Sprintf("%s/api/collections/games_accounts/auth-refresh", c.baseURL)
+		req, _ = http.NewRequest("POST", url, nil)
+		req.Header.Set("Authorization", "Bearer "+userToken)
+		req.Header.Set(aoHeader, c.aoKey)
+
+		resp, err = c.http.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", errors.New("token verification failed")
+		}
 	}
 
 	var body respBody
@@ -280,4 +295,109 @@ func (c *Client) GetPower(id string) (models.Power, error) {
 		return power, err
 	}
 	return power, nil
+}
+
+// AuthWithPassword authenticates a user with PocketBase and returns user info and user ID.
+func (c *Client) AuthWithPassword(email, password string) (struct {
+	UserID string
+	User   any
+}, error) {
+	type respBody struct {
+		Token  string `json:"token"`
+		Record struct {
+			ID          string `json:"id"`
+			Email       string `json:"email"`
+			Username    string `json:"username"`
+			DisplayName string `json:"display_name"`
+			// Add more fields as needed
+		} `json:"record"`
+	}
+	payload := map[string]string{
+		"identity": email,
+		"password": password,
+	}
+	body, _ := json.Marshal(payload)
+	url := c.baseURL + "/api/collections/games_accounts/auth-with-password"
+
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	c.withHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return struct {
+			UserID string
+			User   any
+		}{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return struct {
+			UserID string
+			User   any
+		}{}, errors.New("auth failed: " + string(b))
+	}
+	var out respBody
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return struct {
+			UserID string
+			User   any
+		}{}, err
+	}
+	return struct {
+		UserID string
+		User   any
+	}{UserID: out.Record.ID, User: out.Record}, nil
+}
+
+// RegisterUser registers a new user in PocketBase and returns user info and user ID.
+func (c *Client) RegisterUser(email, password, username, displayName string) (struct {
+	UserID string
+	User   any
+}, error) {
+	type respBody struct {
+		ID          string `json:"id"`
+		Email       string `json:"email"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		// Add more fields as needed
+	}
+	payload := map[string]string{
+		"email":           email,
+		"password":        password,
+		"passwordConfirm": password,
+		"username":        username,
+		"display_name":    displayName,
+	}
+	body, _ := json.Marshal(payload)
+	url := c.baseURL + "/api/collections/games_accounts/records"
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	c.withHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return struct {
+			UserID string
+			User   any
+		}{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		return struct {
+			UserID string
+			User   any
+		}{}, errors.New("registration failed: " + string(b))
+	}
+	var out respBody
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return struct {
+			UserID string
+			User   any
+		}{}, err
+	}
+	return struct {
+		UserID string
+		User   any
+	}{UserID: out.ID, User: out}, nil
 }

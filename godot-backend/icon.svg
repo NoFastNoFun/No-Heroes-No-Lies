@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128"
+    xmlns="http://www.w3.org/2000/svg">
+    <rect width="128" height="128" fill="#2d2d2d"/>
+    <circle cx="64" cy="64" r="40" fill="#4a9eff"/>
+    <text x="64" y="75" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="24" font-weight="bold">NH</text>
+</svg> 

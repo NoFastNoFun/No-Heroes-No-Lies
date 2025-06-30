@@ -1,6 +1,68 @@
 # API Documentation
 
-This backend provides comprehensive OpenAPI documentation for all routes and implements graceful shutdown for production deployments.
+This backend provides OpenAPI documentation for REST routes and implements graceful shutdown for production deployments.
+
+## WebSocket Game API
+
+All in-game actions are handled via WebSocket:
+
+- **Endpoint:** `/ws/game/{id}`
+- **Authentication:** Uses the `game_auth` cookie (JWT)
+- **Message format:**
+
+```json
+{
+  "type": "move", // or "ready", "forfeit"
+  "payload": { ... }
+}
+```
+
+- **Supported types:**
+  - `move`: Submit a move (demask, fight, power, etc.)
+  - `ready`: Toggle ready status
+  - `forfeit`: Forfeit the current game session
+
+- **Server broadcasts:**
+  - On any valid action, the updated game state is broadcast to all connected clients in the session.
+
+### Example: Submitting a Move
+
+```json
+{
+  "type": "move",
+  "payload": {
+    "type": "demask",
+    "target_player": "player456",
+    "guess": "hero_name"
+  }
+}
+```
+
+### Example: Toggling Ready
+
+```json
+{
+  "type": "ready",
+  "payload": {}
+}
+```
+
+### Example: Forfeit
+
+```json
+{
+  "type": "forfeit",
+  "payload": {}
+}
+```
+
+## REST Endpoints (Lobby & Auth Only)
+
+- `POST /api/game` - Create new game session
+- `POST /api/game/{id}/join` - Join game session (with optional spectator parameter)
+- `POST /api/auth/login` - Login
+- `POST /api/auth/refresh` - Refresh session
+- `GET /api/auth/logout` - Logout
 
 ## Graceful Shutdown
 
@@ -58,11 +120,7 @@ Once the server is running, you can access the OpenAPI documentation at:
 
 ## Authentication
 
-All endpoints (except health check) require Bearer token authentication. Include the token in the Authorization header:
-
-```
-Authorization: Bearer <your-token>
-```
+All endpoints (except health check) require authentication via the `game_auth` cookie (JWT).
 
 ## Data Models
 

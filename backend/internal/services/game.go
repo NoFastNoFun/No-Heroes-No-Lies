@@ -17,7 +17,8 @@ type GameService struct {
 	pbClient *pb.Client
 }
 
-const coinWinThreshold = 5
+// ChallengeWindowDuration is the duration for which a move can be challenged.
+var ChallengeWindowDuration = 10 * time.Second // TODO: make configurable for difficulty options
 
 func NewGameService(c *pb.Client) *GameService { return &GameService{pbClient: c} }
 
@@ -67,6 +68,12 @@ func (s *GameService) ApplyMove(
 		return errors.New("not your turn")
 	}
 
+	// Reset order-0 power usage at the start of the turn
+	session.State.Order0UsedBy = map[string]bool{}
+
+	// Remove any lingering challenge window at the start of the turn
+	session.State.LastMove = nil
+
 	switch payload.Type {
 	case "demask":
 		if err := s.handleDemask(&session, playerID, payload); err != nil {
@@ -76,9 +83,28 @@ func (s *GameService) ApplyMove(
 		if err := s.handleFight(&session, playerID, payload); err != nil {
 			return err
 		}
+		// Start challenge window at alibi declaration, lasting until end of turn + ChallengeWindowDuration
+		session.State.LastMove = &models.LastMove{
+			ActorID:       playerID,
+			Type:          "fight",
+			DeclaredAlibi: payload.DeclaredAlibi,
+			MonsterID:     payload.MonsterID,
+			ExpiresAt:     time.Now().Add(ChallengeWindowDuration).UnixMilli(),
+		}
 	case "power":
+		// Enforce power sequence: must pick a card, discard a card, declare alibi, use power
+		if payload.DrawnCardID == "" || payload.DiscardCardID == "" || payload.DeclaredAlibi == "" || payload.PowerID == "" {
+			return errors.New("power move must include drawn_card_id, discard_card_id, declared_alibi, and power_id")
+		}
 		if err := s.handlePower(&session, playerID, payload); err != nil {
 			return err
+		}
+		// Start challenge window at alibi declaration, lasting until end of turn + ChallengeWindowDuration
+		session.State.LastMove = &models.LastMove{
+			ActorID:       playerID,
+			Type:          "power",
+			DeclaredAlibi: payload.DeclaredAlibi,
+			ExpiresAt:     time.Now().Add(ChallengeWindowDuration).UnixMilli(),
 		}
 	default:
 		return errors.New("unknown move type")
@@ -204,11 +230,10 @@ func (s *GameService) handleFight(
 
 	heroStr := heroStrength(session, actor, heroCard)
 	heroLost := monsterCard.Strength > heroStr
-	var coinsDelta, gemsDelta, lifeDelta int
+	var coinsDelta, gemsDelta int
 
 	if heroLost {
 		actor.Life--
-		lifeDelta = -1
 	} else {
 		coinsDelta = monsterCard.Loot.Coins
 		gemsDelta = monsterCard.Loot.Gems
@@ -230,19 +255,6 @@ func (s *GameService) handleFight(
 			session.State.MonsterDeck = session.State.MonsterDeck[1:]
 			session.State.ActiveMonsters = append(session.State.ActiveMonsters, next)
 		}
-	}
-
-	// 5-second challenge window
-	session.State.LastMove = &models.LastMove{
-		ActorID:       playerID,
-		Type:          "fight",
-		DeclaredAlibi: p.DeclaredAlibi,
-		MonsterID:     p.MonsterID,
-		CoinsDelta:    coinsDelta,
-		GemsDelta:     gemsDelta,
-		LifeDeltaID:   actor.ID,
-		LifeDelta:     lifeDelta,
-		ExpiresAt:     time.Now().Add(5 * time.Second).UnixMilli(),
 	}
 
 	// After first monster resolution, process second if session.State.DualAttack:
@@ -294,13 +306,6 @@ func (s *GameService) handlePower(
 		session.State.Order0UsedBy[playerID] = true
 	}
 
-	// 5-second challenge window
-	session.State.LastMove = &models.LastMove{
-		ActorID:       playerID,
-		Type:          "power",
-		DeclaredAlibi: p.DeclaredAlibi,
-		ExpiresAt:     time.Now().Add(5 * time.Second).UnixMilli(),
-	}
 	return nil
 }
 
@@ -476,7 +481,7 @@ func (s *GameService) detectOutcome(state *models.GameState) {
 		// coin victory check
 		var coinWinners []string
 		for _, p := range alive {
-			if p.Coins >= coinWinThreshold {
+			if p.Coins >= len(state.Players)+1 {
 				coinWinners = append(coinWinners, p.ID)
 			}
 		}
@@ -537,7 +542,13 @@ func (s *GameService) discardHeroCard(session *models.GameSession, cardID string
 	if cardID == "" {
 		return
 	}
-	session.State.DiscardPile = append(session.State.DiscardPile, cardID)
+	// Always keep at least one card in the discard pile unless burning
+	if len(session.State.DiscardPile) == 0 {
+		session.State.DiscardPile = append(session.State.DiscardPile, cardID)
+	} else {
+		// If burning, handle separately (not implemented here)
+		session.State.DiscardPile = append(session.State.DiscardPile, cardID)
+	}
 	session.State.PublicDiscard = cardID
 }
 
@@ -554,15 +565,14 @@ func (s *GameService) changePlayerHero(session *models.GameSession, player *mode
 
 // Helper function to recycle discard pile when hero deck is empty
 func (s *GameService) recycleDiscardPile(session *models.GameSession) {
-	if len(session.State.DiscardPile) == 0 {
-		return // nothing to recycle
+	if len(session.State.DiscardPile) <= 1 {
+		return // always leave at least one card in the discard pile
 	}
-
-	// Move all non-burned discarded cards back to the deck
-	session.State.HeroDeck = append(session.State.HeroDeck, session.State.DiscardPile...)
-	session.State.DiscardPile = nil
-	session.State.PublicDiscard = "" // clear public discard since we're recycling
-
+	// Move all but the last discarded card back to the deck
+	cardsToRecycle := session.State.DiscardPile[:len(session.State.DiscardPile)-1]
+	session.State.HeroDeck = append(session.State.HeroDeck, cardsToRecycle...)
+	session.State.DiscardPile = session.State.DiscardPile[len(session.State.DiscardPile)-1:]
+	session.State.PublicDiscard = session.State.DiscardPile[0] // last discarded card remains public
 	// Shuffle the recycled deck
 	rand.Shuffle(len(session.State.HeroDeck), func(i, j int) {
 		session.State.HeroDeck[i], session.State.HeroDeck[j] = session.State.HeroDeck[j], session.State.HeroDeck[i]

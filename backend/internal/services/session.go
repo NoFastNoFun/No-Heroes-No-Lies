@@ -1,12 +1,16 @@
 package services
 
 import (
+	"context"
 	"errors"
+	"log"
 	"math/rand"
 	"time"
 
 	"no-heroes-no-lies/internal/models"
 	"no-heroes-no-lies/internal/pb"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // SessionService provides create / join / start helpers.
@@ -165,7 +169,6 @@ func (s *SessionService) StartSession(sessionID string) (models.GameSession, err
 			Life:         lifeForPlayers(pCount),
 			Coins:        0,
 			Gems:         0,
-			Glory:        0,
 			Hand:         []string{},
 		})
 	}
@@ -242,4 +245,53 @@ func filter(arr []string, drop string) []string {
 		}
 	}
 	return out
+}
+
+type PBSession struct {
+	AccessToken  string
+	RefreshToken string
+}
+
+var redisClient *redis.Client
+
+func InitRedis(addr string) {
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	redisClient = redis.NewClient(&redis.Options{
+		Addr: addr,
+	})
+	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+}
+
+func SetPBSession(ctx context.Context, userID string, session PBSession, ttl time.Duration) error {
+	key := "pb_session:" + userID
+	if err := redisClient.HSet(ctx, key, map[string]interface{}{
+		"access":  session.AccessToken,
+		"refresh": session.RefreshToken,
+	}).Err(); err != nil {
+		return err
+	}
+	// Set TTL
+	redisClient.Expire(ctx, key, ttl)
+	return nil
+}
+
+func GetPBSession(ctx context.Context, userID string) (PBSession, error) {
+	key := "pb_session:" + userID
+	vals, err := redisClient.HGetAll(ctx, key).Result()
+	if err != nil {
+		return PBSession{}, err
+	}
+	return PBSession{
+		AccessToken:  vals["access"],
+		RefreshToken: vals["refresh"],
+	}, nil
+}
+
+func DeletePBSession(ctx context.Context, userID string) error {
+	key := "pb_session:" + userID
+	return redisClient.Del(ctx, key).Err()
 }

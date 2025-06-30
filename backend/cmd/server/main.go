@@ -24,6 +24,7 @@ import (
 	"no-heroes-no-lies/internal/hostfilter"
 	"no-heroes-no-lies/internal/pb"
 	"no-heroes-no-lies/internal/services"
+	"no-heroes-no-lies/internal/ws"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -32,6 +33,11 @@ import (
 
 func main() {
 	cfg := config.Load()
+
+	// Set JWT secret
+	auth.SetJWTSecret(cfg.GameJWTSecret)
+	// Initialize Redis
+	services.InitRedis(cfg.RedisAddr)
 
 	pbClient := pb.NewClient(cfg.PocketBaseURL, cfg.PocketBaseAOKey)
 	gameSvc := services.NewGameService(pbClient)
@@ -55,8 +61,9 @@ func main() {
 	r.Get("/api/health/slow", handlers.SlowHealthHandler)
 
 	// Auth routes (no auth required)
-	r.Post("/api/auth/login", handlers.LoginHandler(pbClient))
-	r.Post("/api/auth/register", handlers.RegisterHandler(pbClient))
+	r.Post("/api/auth/login", handlers.AuthLoginHandler(pbClient))
+	r.Post("/api/auth/refresh", handlers.AuthRefreshHandler(pbClient))
+	r.Get("/api/auth/logout", handlers.AuthLogoutHandler(pbClient))
 
 	// OpenAPI documentation
 	r.Get("/swagger/*", httpSwagger.Handler(
@@ -73,6 +80,12 @@ func main() {
 		handlers.RegisterGameRoutes(r, gameSvc)
 		handlers.RegisterChallengeRoute(r, gameSvc)
 		handlers.RegisterCardsRoutes(r, pbClient)
+	})
+
+	// WebSocket endpoint for real-time game updates
+	r.Get("/ws/game/{id}", func(w http.ResponseWriter, r *http.Request) {
+		sessionID := chi.URLParam(r, "id")
+		ws.GameWSHandler(w, r, sessionID, gameSvc, sessionSvc)
 	})
 
 	// Create HTTP server

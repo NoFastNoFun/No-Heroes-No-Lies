@@ -5,7 +5,6 @@ type PlayerState struct {
 	Life          int      `json:"life"`
 	Coins         int      `json:"coins"`
 	Gems          int      `json:"gems"`
-	Glory         int      `json:"glory"`
 	CurrentHero   string   `json:"current_hero"`
 	CurrentAlibi  string   `json:"current_alibi"`
 	Hand          []string `json:"hand,omitempty"`

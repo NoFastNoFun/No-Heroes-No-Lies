@@ -8,6 +8,8 @@ type Config struct {
 	PocketBaseURL       string
 	PocketBaseAOKey     string
 	AllowedDomainSuffix string
+	RedisAddr           string
+	GameJWTSecret       string
 }
 
 // Load reads env vars and returns a Config.
@@ -17,6 +19,8 @@ func Load() Config {
 		PocketBaseURL:       getenv("POCKETBASE_URL", "http://localhost:8090"),
 		PocketBaseAOKey:     getenv("POCKETBASE_AO_KEY", ""),
 		AllowedDomainSuffix: getenv("ALLOWED_DOMAIN_SUFFIX", "localhost:8080"),
+		RedisAddr:           getenv("REDIS_ADDR", "localhost:6379"),
+		GameJWTSecret:       getenv("GAME_JWT_SECRET", "changeme"),
 	}
 }
 

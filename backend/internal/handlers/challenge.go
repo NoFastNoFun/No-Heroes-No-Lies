@@ -30,9 +30,9 @@ func RegisterChallengeRoute(r chi.Router, svc *services.GameService) {
 func challengeHandler(svc *services.GameService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "id")
-		challengerID, err := auth.PlayerIDFromContext(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+		challengerID, ok := auth.UserIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		if err := svc.ResolveChallenge(sessionID, challengerID, time.Now().UnixMilli()); err != nil {

@@ -401,3 +401,101 @@ func (c *Client) RegisterUser(email, password, username, displayName string) (st
 		User   any
 	}{UserID: out.ID, User: out}, nil
 }
+
+// AuthWithPasswordFull authenticates a user and returns userID, access/refresh tokens, and user info.
+func (c *Client) AuthWithPasswordFull(email, password string) (userID, accessToken, refreshToken string, user any, err error) {
+	type respBody struct {
+		Token        string `json:"token"`
+		RefreshToken string `json:"refreshToken"`
+		Record       struct {
+			ID          string `json:"id"`
+			Email       string `json:"email"`
+			Username    string `json:"username"`
+			DisplayName string `json:"display_name"`
+			// Add more fields as needed
+		} `json:"record"`
+	}
+	payload := map[string]string{
+		"identity": email,
+		"password": password,
+	}
+	body, _ := json.Marshal(payload)
+	url := c.baseURL + "/api/collections/users/auth-with-password"
+
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	c.withHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		err = errors.New("auth failed: " + string(b))
+		return
+	}
+	var out respBody
+	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return
+	}
+	userID = out.Record.ID
+	accessToken = out.Token
+	refreshToken = out.RefreshToken
+	user = out.Record
+	return
+}
+
+// AuthRefresh refreshes PB tokens using the current access and refresh tokens.
+func (c *Client) AuthRefresh(accessToken, refreshToken string) (newAccessToken, newRefreshToken string, err error) {
+	type respBody struct {
+		Token        string `json:"token"`
+		RefreshToken string `json:"refreshToken"`
+	}
+	payload := map[string]string{
+		"token":        accessToken,
+		"refreshToken": refreshToken,
+	}
+	body, _ := json.Marshal(payload)
+	url := c.baseURL + "/api/collections/users/auth-refresh"
+
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	c.withHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		err = errors.New("refresh failed: " + string(b))
+		return
+	}
+	var out respBody
+	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return
+	}
+	newAccessToken = out.Token
+	newRefreshToken = out.RefreshToken
+	return
+}
+
+// AuthLogout revokes PB tokens using the access token.
+func (c *Client) AuthLogout(accessToken string) error {
+	url := c.baseURL + "/api/collections/users/logout"
+	req, _ := http.NewRequest("POST", url, nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	c.withHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return errors.New("logout failed: " + string(b))
+	}
+	return nil
+}

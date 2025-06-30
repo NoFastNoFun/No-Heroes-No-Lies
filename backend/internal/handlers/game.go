@@ -34,9 +34,9 @@ func RegisterGameRoutes(r chi.Router, svc *services.GameService) {
 // @Router /game/{id} [get]
 func getSession(svc *services.GameService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		playerID, err := auth.PlayerIDFromContext(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+		playerID, ok := auth.UserIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -68,9 +68,9 @@ func getSession(svc *services.GameService) http.HandlerFunc {
 func postMove(svc *services.GameService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "id")
-		playerID, err := auth.PlayerIDFromContext(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+		playerID, ok := auth.UserIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -101,9 +101,9 @@ func postMove(svc *services.GameService) http.HandlerFunc {
 // @Router /game/{id}/forfeit [post]
 func postForfeit(svc *services.GameService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		playerID, err := auth.PlayerIDFromContext(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), 401)
+		playerID, ok := auth.UserIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		sessionID := chi.URLParam(r, "id")

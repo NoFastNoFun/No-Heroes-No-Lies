@@ -30,7 +30,11 @@ func RegisterSessionRoutes(r chi.Router, svc *services.SessionService) {
 // @Router /game/{id}/ready [post]
 func readyToggle(sess *services.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		playerID, _ := auth.PlayerIDFromContext(r.Context())
+		playerID, ok := auth.UserIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		sessionID := chi.URLParam(r, "id")
 		sn, err := sess.ToggleReady(sessionID, playerID)
 		if err != nil {
@@ -53,9 +57,9 @@ func readyToggle(sess *services.SessionService) http.HandlerFunc {
 // @Router /game [post]
 func createSession(sess *services.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		playerID, err := auth.PlayerIDFromContext(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+		playerID, ok := auth.UserIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -81,7 +85,11 @@ func createSession(sess *services.SessionService) http.HandlerFunc {
 // @Router /game/{id}/join [post]
 func joinSession(sess *services.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		playerID, _ := auth.PlayerIDFromContext(r.Context())
+		playerID, ok := auth.UserIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		sessionID := chi.URLParam(r, "id")
 		spec := r.URL.Query().Get("spectator") == "1"
 

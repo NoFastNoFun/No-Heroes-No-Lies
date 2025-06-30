@@ -2,59 +2,69 @@ package auth
 
 import (
 	"context"
-	"errors"
+	"crypto/sha256"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v4"
+	"no-heroes-no-lies/internal/services"
 )
 
 const (
-	authHeader            = "Authorization"
-	ctxKeyPlayerID ctxKey = "playerID"
+	authHeader          = "Authorization"
+	ctxKeyUserID ctxKey = "userID"
 )
 
 type ctxKey string
 
-var jwtSecret = []byte("supersecretkey_change_me") // TODO: move to config
-
 // Middleware returns an HTTP middleware that:
-//  1. extracts the Bearer token (JWT)
+//  1. extracts the JWT from the game_auth cookie
 //  2. verifies it with our backend secret
-//  3. on success, injects playerID into request context
+//  3. checks PB token hash against Redis
+//  4. on success, injects userID into request context
 func Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := extractBearer(r.Header.Get(authHeader))
-			if token == "" {
-				log.Printf("Auth middleware: missing bearer token for %s %s", r.Method, r.URL.Path)
-				http.Error(w, "missing bearer token", http.StatusUnauthorized)
+			cookie, err := r.Cookie("game_auth")
+			if err != nil || cookie.Value == "" {
+				log.Printf("Auth middleware: missing game_auth cookie for %s %s", r.Method, r.URL.Path)
+				http.Error(w, "missing auth cookie", http.StatusUnauthorized)
 				return
 			}
 
-			log.Printf("Auth middleware: verifying JWT for %s %s", r.Method, r.URL.Path)
-			playerID, err := verifyJWT(token)
+			userID, pbHash, err := VerifyJWT(cookie.Value)
 			if err != nil {
 				log.Printf("Auth middleware: JWT verification failed for %s %s: %v", r.Method, r.URL.Path, err)
 				http.Error(w, "invalid token", http.StatusUnauthorized)
 				return
 			}
 
-			log.Printf("Auth middleware: JWT verified successfully for player %s on %s %s", playerID, r.Method, r.URL.Path)
-			ctx := context.WithValue(r.Context(), ctxKeyPlayerID, playerID)
+			sess, err := services.GetPBSession(r.Context(), userID)
+			if err != nil {
+				log.Printf("Auth middleware: failed to load PB session for user %s: %v", userID, err)
+				http.Error(w, "session expired", http.StatusUnauthorized)
+				return
+			}
+			// Check PB access token hash
+			hash := sha256.Sum256([]byte(sess.AccessToken))
+			if hex.EncodeToString(hash[:]) != pbHash {
+				log.Printf("Auth middleware: PB token hash mismatch for user %s", userID)
+				http.Error(w, "token revoked", http.StatusUnauthorized)
+				return
+			}
+
+			log.Printf("Auth middleware: JWT and PB token verified for user %s on %s %s", userID, r.Method, r.URL.Path)
+			ctx := context.WithValue(r.Context(), ctxKeyUserID, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-// PlayerIDFromContext returns the authenticated player ID.
-func PlayerIDFromContext(ctx context.Context) (string, error) {
-	id, ok := ctx.Value(ctxKeyPlayerID).(string)
-	if !ok || id == "" {
-		return "", errors.New("unauthenticated request")
-	}
-	return id, nil
+// UserIDFromContext returns the authenticated user ID.
+func UserIDFromContext(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(ctxKeyUserID).(string)
+	return id, ok
 }
 
 func extractBearer(header string) string {
@@ -66,26 +76,4 @@ func extractBearer(header string) string {
 		return ""
 	}
 	return parts[1]
-}
-
-func verifyJWT(tokenString string) (string, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		// Validate the signing method
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return jwtSecret, nil
-	})
-
-	if err != nil {
-		return "", err
-	}
-
-	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		if userID, ok := claims["sub"].(string); ok {
-			return userID, nil
-		}
-	}
-
-	return "", errors.New("invalid token claims")
 }

@@ -11,7 +11,7 @@ Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** o
 |------|---------|
 | **Fair play** | Validate every move, enforce costs, turn order, passives, lie-challenges, win rules |
 | **Persistence** | Persist authoritative state in PocketBase (`game_sessions`, `moves`, ...) |
-| **Simple API** | Lightweight HTTP endpoints (`/game`, `/move`, ...) for any web / mobile client |
+| **Simple API** | Lightweight HTTP endpoints for session creation, join, and authentication. All in-game actions use WebSocket. |
 | **Zero-trust** | Clients only receive per-player "sanitized" views - hidden cards & decks stay server-side |
 
 ---
@@ -21,10 +21,45 @@ Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** o
 | Layer | Responsibility |
 |-------|----------------|
 | **PocketBase** | Collections (`users`, `game_sessions`, `moves`), authentication, realtime streams |
-| **Go server**  | Game logic, lobby, power engine, AO_KEY header, host-gate, `/api/health` |
+| **Go server**  | Game logic, lobby, power engine, AO_KEY header, host-gate, `/api/health`, **WebSocket game logic** |
 | **React Frontend** | Modern web interface with PocketBase authentication and game sessions |
 
 *Every server -> PB call includes **AO_KEY**; no admin token required.*
+
+---
+
+## WebSocket Game Protocol
+
+All in-game actions (moves, ready, forfeit, etc.) are handled via a single WebSocket connection:
+
+- **Endpoint:** `/ws/game/{id}`
+- **Authentication:** Uses the `game_auth` cookie (JWT)
+- **Message format:**
+
+```json
+{
+  "type": "move", // or "ready", "forfeit"
+  "payload": { ... }
+}
+```
+
+- **Supported types:**
+  - `move`: Submit a move (demask, fight, power, etc.)
+  - `ready`: Toggle ready status
+  - `forfeit`: Forfeit the current game session
+
+- **Server broadcasts:**
+  - On any valid action, the updated game state is broadcast to all connected clients in the session.
+
+---
+
+## REST API (Lobby & Auth Only)
+
+- `POST /api/game` - Create new game session
+- `POST /api/game/{id}/join` - Join game session (with optional spectator parameter)
+- `POST /api/auth/login` - Login
+- `POST /api/auth/refresh` - Refresh session
+- `GET /api/auth/logout` - Logout
 
 ---
 
@@ -36,14 +71,13 @@ Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** o
 | **Lobby system**   | OK | Join/leave before start, per-player **Ready/Not-ready**, start only when everyone ready, late joiners become **spectators** |
 | **Session lifecycle** | OK | Create -> join -> start (2-15 players), deck build, burn, deal, random first player |
 | **Moves & powers** | OK | `demask`, `fight`, full **26 active powers** + 3 passives, order-chain & cost enforcement, audit in `moves` |
-| **Challenge window** | OK | 5-second lie challenge with rollback |
+| **Challenge window** | OK | 10-second lie challenge (configurable) with rollback |
 | **Passives implemented** | OK | `alternate_strength`, `teamwork`, `keep_gems` (alibi-based) |
 | **Combat & loot**  | OK | Strength compare, loot payout via teamwork, dual-attack flag |
-| **Win detection**  | OK | Auto-end: last survivor **or** >= 5 coins; draw if everyone KO same turn |
+| **Win detection**  | OK | Auto-end: last survivor **or** coins >= (players + 1); draw if everyone KO same turn |
 | **Spectators**     | OK | `/join?spectator=1` after start; spectators cannot act |
 | **Sanitized view** | OK | `/game/{id}` returns only info the caller is allowed to see |
 | **Docker / Coolify** | OK | Multi-stage image, env vars, health-check endpoint |
-| **React Frontend** | ✅ NEW | Modern UI with PocketBase authentication, lobby system, and game session management |
 
 ---
 
@@ -115,7 +149,6 @@ npm run dev
 
 4. **Access the Application:**
 
-- Frontend: <http://localhost:3000>
 - Backend API: <http://localhost:8080>
 - PocketBase Admin: <http://localhost:8090/_/>
 - API Documentation: <http://localhost:8080/swagger/>
@@ -167,14 +200,26 @@ The new React frontend includes:
 
 ## API Usage
 
-Clients authenticate with PocketBase JWT:
+- **All in-game actions:** Use WebSocket `/ws/game/{id}`
+- **REST:** Only for session creation, join, and authentication
 
-```http
-POST /game/{id}/move
-Authorization: Bearer <PB-JWT>
-Content-Type: application/json
-```
+Happy bluffing!
 
-and subscribe to `game_sessions/{id}` via PocketBase realtime for live updates.
+### Card Lifecycle
 
-Happy bluffing
+- **Discarded cards**: Hero cards that are played/discarded but not removed from the game. The last discarded card is public. Discarded cards can be recycled into the hero deck.
+- **Burned cards**: Hero cards removed from the game entirely and hidden from memory. Burned cards are never recycled or made public.
+
+### Power Move Enforcement
+
+- When using a hero's power, a player **must** draw a card and discard either the drawn card or their current card. This is strictly enforced by the backend.
+
+### Win Conditions
+
+- The game ends when only one player remains alive, **or** when any player reaches a number of coins equal to the number of players plus one.
+
+---
+
+## Test Status
+
+- All backend code builds and passes tests as of the latest update.

@@ -13,3 +13,6 @@ ENV PORT=8080
 COPY --from=build /app /app
 EXPOSE 8080
 ENTRYPOINT ["/app"]
+
+# Install PostgreSQL and Redis clients for debugging
+RUN apt-get update && apt-get install -y postgresql-client redis-tools && rm -rf /var/lib/apt/lists/*

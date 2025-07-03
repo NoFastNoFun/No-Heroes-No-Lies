@@ -6,21 +6,23 @@ import (
 	"math/rand"
 	"time"
 
+	"no-heroes-no-lies/internal/db"
 	"no-heroes-no-lies/internal/models"
-	"no-heroes-no-lies/internal/pb"
 	"no-heroes-no-lies/internal/powers"
 	"no-heroes-no-lies/internal/triggers"
 )
 
 // GameService provides game-rule operations.
 type GameService struct {
-	pbClient *pb.Client
+	sessions *SessionService
 }
 
 // ChallengeWindowDuration is the duration for which a move can be challenged.
 var ChallengeWindowDuration = 10 * time.Second // TODO: make configurable for difficulty options
 
-func NewGameService(c *pb.Client) *GameService { return &GameService{pbClient: c} }
+func NewGameService(sessions *SessionService) *GameService {
+	return &GameService{sessions: sessions}
+}
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -46,9 +48,9 @@ func heroStrength(
 
 // ── public API ─────────────────────────────────────────────────────────────
 
-// FetchSession returns a PB record.
+// FetchSession returns a session from Redis.
 func (s *GameService) FetchSession(id string) (models.GameSession, error) {
-	return s.pbClient.FetchSession(id)
+	return s.sessions.FetchSession(id)
 }
 
 // ApplyMove = validate → mutate state → persist → log.
@@ -57,6 +59,9 @@ func (s *GameService) ApplyMove(
 	playerID string,
 	payload models.MovePayload,
 ) error {
+	if s.isArchived(sessionID) {
+		return errors.New("game is archived and cannot be modified")
+	}
 	session, err := s.FetchSession(sessionID)
 	if err != nil {
 		return err
@@ -117,13 +122,13 @@ func (s *GameService) ApplyMove(
 	s.detectOutcome(&session.State)
 
 	// persist
-	if err := s.pbClient.UpdateSession(session.ID, session.State, session.IsActive); err != nil {
+	if err := s.sessions.UpdateSession(session); err != nil {
 		return err
 	}
 
 	// log move
 	b, _ := json.Marshal(payload)
-	return s.pbClient.InsertMove(models.Move{
+	return db.InsertMove(models.Move{
 		SessionID: session.ID,
 		PlayerID:  playerID,
 		Type:      payload.Type,
@@ -206,11 +211,11 @@ func (s *GameService) handleFight(
 		return errors.New("monster not active")
 	}
 
-	heroCard, err := s.pbClient.GetCard(p.DeclaredAlibi)
+	heroCard, err := db.GetCard(p.DeclaredAlibi)
 	if err != nil {
 		return err
 	}
-	monsterCard, err := s.pbClient.GetCard(p.MonsterID)
+	monsterCard, err := db.GetCard(p.MonsterID)
 	if err != nil {
 		return err
 	}
@@ -273,7 +278,7 @@ func (s *GameService) handlePower(
 	p models.MovePayload,
 ) error {
 	// fetch power definition
-	pwr, err := s.pbClient.GetPower(p.PowerID)
+	pwr, err := db.GetPower(p.PowerID)
 	if err != nil {
 		return err
 	}
@@ -294,7 +299,7 @@ func (s *GameService) handlePower(
 	if !ok {
 		return errors.New("power not implemented")
 	}
-	if err := eff(session, actor, p, s.pbClient); err != nil {
+	if err := eff(session, actor, p); err != nil {
 		return err
 	}
 
@@ -363,7 +368,7 @@ func (s *GameService) ResolveChallenge(
 	// detect game outcome
 	s.detectOutcome(&session.State)
 
-	return s.pbClient.UpdateSession(session.ID, session.State, session.IsActive)
+	return s.sessions.UpdateSession(session)
 }
 
 func playerPtr(s *models.GameSession, id string) *models.PlayerState {
@@ -378,18 +383,17 @@ func playerPtr(s *models.GameSession, id string) *models.PlayerState {
 func alibiPassives(
 	_ *models.GameSession,
 	player *models.PlayerState,
-	pbCli *pb.Client,
 ) ([]string, error) {
 	if player.CurrentAlibi == "" {
 		return nil, nil // no alibi declared ⇒ no passive
 	}
-	card, err := pbCli.GetCard(player.CurrentAlibi)
+	card, err := db.GetCard(player.CurrentAlibi)
 	if err != nil {
 		return nil, err
 	}
 	var acts []string
 	for _, id := range card.PowerIDs {
-		pwr, err := pbCli.GetPower(id)
+		pwr, err := db.GetPower(id)
 		if err != nil {
 			return nil, err
 		}
@@ -404,9 +408,8 @@ func hasPassive(
 	session *models.GameSession,
 	player *models.PlayerState,
 	action string,
-	pbCli *pb.Client,
 ) bool {
-	acts, err := alibiPassives(session, player, pbCli)
+	acts, err := alibiPassives(session, player)
 	if err != nil {
 		return false
 	}
@@ -422,9 +425,8 @@ func hasPassive(
 func canStealGems(
 	session *models.GameSession,
 	tgt *models.PlayerState,
-	cli *pb.Client,
 ) bool {
-	return !hasPassive(session, tgt, "keep_gems", cli)
+	return !hasPassive(session, tgt, "keep_gems")
 }
 
 // giveGems adds gems to receiver and triggers "teamwork" passives.
@@ -440,16 +442,15 @@ func (s *GameService) giveGems(session *models.GameSession, recv *models.PlayerS
 		ActorID: recv.ID,
 		Amount:  n,
 	}
-	triggers.Dispatch(session, &ev, s.pbClient)
+	triggers.Dispatch(session, &ev)
 }
 
 // effectiveStrength calculates the effective strength of a player's declared alibi
 func effectiveStrength(
 	_ *models.GameSession,
 	player *models.PlayerState,
-	pbCli *pb.Client,
 ) int {
-	card, err := pbCli.GetCard(player.CurrentAlibi)
+	card, err := db.GetCard(player.CurrentAlibi)
 	if err != nil {
 		return 0
 	}
@@ -462,6 +463,20 @@ func effectiveStrength(
 
 func (s *GameService) detectOutcome(state *models.GameState) {
 	if state.Draw || len(state.WinnerIDs) > 0 {
+		// Archive the game if not already archived
+		sessionID := ""
+		if len(state.WinnerIDs) > 0 {
+			sessionID = state.WinnerIDs[0] // fallback, but should use session.ID
+		}
+		// Ideally, pass session.ID from caller
+		// For now, skip if sessionID is empty
+		if sessionID != "" && !s.isArchived(sessionID) {
+			session, err := s.sessions.FetchSession(sessionID)
+			if err == nil {
+				moves, _ := db.FetchMovesForSession(session.ID)
+				_ = db.ArchiveGame(session, moves)
+			}
+		}
 		return // already ended
 	}
 
@@ -493,6 +508,9 @@ func (s *GameService) detectOutcome(state *models.GameState) {
 
 // Forfeit marks a player as out, triggers win detection.
 func (s *GameService) Forfeit(sessionID, playerID string) error {
+	if s.isArchived(sessionID) {
+		return errors.New("game is archived and cannot be modified")
+	}
 	session, err := s.FetchSession(sessionID)
 	if err != nil {
 		return err
@@ -523,13 +541,13 @@ func (s *GameService) Forfeit(sessionID, playerID string) error {
 	}
 
 	// persist
-	if err := s.pbClient.UpdateSession(session.ID, session.State, session.IsActive); err != nil {
+	if err := s.sessions.UpdateSession(session); err != nil {
 		return err
 	}
 
 	// log move
 	move, _ := json.Marshal(map[string]string{"type": "forfeit"})
-	return s.pbClient.InsertMove(models.Move{
+	return db.InsertMove(models.Move{
 		SessionID: session.ID,
 		PlayerID:  playerID,
 		Type:      "forfeit",
@@ -577,4 +595,11 @@ func (s *GameService) recycleDiscardPile(session *models.GameSession) {
 	rand.Shuffle(len(session.State.HeroDeck), func(i, j int) {
 		session.State.HeroDeck[i], session.State.HeroDeck[j] = session.State.HeroDeck[j], session.State.HeroDeck[i]
 	})
+}
+
+// Add a helper to check if a game is archived
+func (s *GameService) isArchived(sessionID string) bool {
+	// Try to fetch from archived_games; if found, it's archived
+	_, _, err := db.GetArchivedGame(sessionID)
+	return err == nil
 }

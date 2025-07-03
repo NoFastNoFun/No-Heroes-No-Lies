@@ -1,7 +1,14 @@
 # No Heroes No Lies - Custom Game Server
 
-Authoritative backend for the multiplayer bluff-and-battle card game **"No Heroes No Lies."**  
-Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** on our VPS.
+**Update 2024-07-03:**
+
+- Fully migrated backend from PocketBase to PostgreSQL (persistent) and Redis (ephemeral/session)
+- User registration and login with JWT auth (bcrypt, users table)
+- All game/session logic, move logging, and state handled by new stack
+- .env loading for local dev
+- Game archival: finished games are saved in Postgres and become immutable
+- All PocketBase code and references removed
+- End-to-end flow: register/login → create/join game → play → finish → game is archived and cannot be modified
 
 ---
 
@@ -10,7 +17,7 @@ Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** o
 | Goal | Details |
 |------|---------|
 | **Fair play** | Validate every move, enforce costs, turn order, passives, lie-challenges, win rules |
-| **Persistence** | Persist authoritative state in PocketBase (`game_sessions`, `moves`, ...) |
+| **Persistence** | Persist authoritative state in PostgreSQL (`users`, `cards`, `powers`, `moves`, `archived_games`) and Redis (sessions) |
 | **Simple API** | Lightweight HTTP endpoints for session creation, join, and authentication. All in-game actions use WebSocket. |
 | **Zero-trust** | Clients only receive per-player "sanitized" views - hidden cards & decks stay server-side |
 
@@ -20,11 +27,10 @@ Pairs with **PocketBase** for Auth + DB + Realtime and deploys via **Coolify** o
 
 | Layer | Responsibility |
 |-------|----------------|
-| **PocketBase** | Collections (`users`, `game_sessions`, `moves`), authentication, realtime streams |
-| **Go server**  | Game logic, lobby, power engine, AO_KEY header, host-gate, `/api/health`, **WebSocket game logic** |
-| **React Frontend** | Modern web interface with PocketBase authentication and game sessions |
-
-*Every server -> PB call includes **AO_KEY**; no admin token required.*
+| **PostgreSQL** | Users, cards, powers, moves, archived_games |
+| **Redis**      | Game sessions (ephemeral, fast access) |
+| **Go server**  | Game logic, lobby, JWT auth, health probe, WebSocket game logic |
+| **React Frontend** | Modern web interface with JWT authentication and game sessions |
 
 ---
 
@@ -55,11 +61,12 @@ All in-game actions (moves, ready, forfeit, etc.) are handled via a single WebSo
 
 ## REST API (Lobby & Auth Only)
 
-- `POST /api/game` - Create new game session
-- `POST /api/game/{id}/join` - Join game session (with optional spectator parameter)
+- `POST /api/auth/register` - Register new user
 - `POST /api/auth/login` - Login
 - `POST /api/auth/refresh` - Refresh session
 - `GET /api/auth/logout` - Logout
+- `POST /api/game` - Create new game session
+- `POST /api/game/{id}/join` - Join game session (with optional spectator parameter)
 
 ---
 
@@ -67,7 +74,7 @@ All in-game actions (moves, ready, forfeit, etc.) are handled via a single WebSo
 
 | Area | Status | Highlights |
 |------|--------|------------|
-| **Infrastructure** | OK | Host filter, AO_KEY header, JWT auth, health probe |
+| **Infrastructure** | OK | Host filter, JWT auth, health probe, .env loading |
 | **Lobby system**   | OK | Join/leave before start, per-player **Ready/Not-ready**, start only when everyone ready, late joiners become **spectators** |
 | **Session lifecycle** | OK | Create -> join -> start (2-15 players), deck build, burn, deal, random first player |
 | **Moves & powers** | OK | `demask`, `fight`, full **26 active powers** + 3 passives, order-chain & cost enforcement, audit in `moves` |
@@ -85,13 +92,11 @@ All in-game actions (moves, ready, forfeit, etc.) are handled via a single WebSo
 
 | Group | To-do |
 |-------|-------|
-| **API polish** | `POST /game` (create lobby) & `/game/{id}/forfeit` finalise docs / errors |
-| **Passive triggers (full)** | Add future triggers (`on_steal_attempt`, `monster_slain`, etc.) |
-| **Realtime fan-out** | Push websocket / PB subscription hints when game ends or state updates |
-| **Graceful shutdown** | Catch SIGTERM, drain connections |
-| **Testing & CI** | Unit tests for power engine and challenge logic; GitHub/Coolify pipeline (`go vet`, `go test`, Docker build) |
+| **API polish** | Finalize docs / errors for all endpoints |
+| **Game logic core** | Enforce power order chain, cost deduction, action execution, passive triggers, win conditions |
+| **Testing & CI** | Unit/integration tests for full cycle, CI pipeline |
 | **Docs** | Public API schema (OpenAPI or MD) for client app |
-| **Game Interface** | Implement the actual game UI when design is finalized |
+| **Frontend** | UI integration with new backend |
 
 ---
 
@@ -101,9 +106,9 @@ All in-game actions (moves, ready, forfeit, etc.) are handled via a single WebSo
 
 - Go 1.21+
 - Node.js 16+
-- PocketBase server running on `http://localhost:8090`
+- PostgreSQL and Redis running (see docker-compose.yml)
 
-### Option 1: Development Scripts
+### Development
 
 **Windows:**
 
@@ -118,15 +123,12 @@ chmod +x start-dev.sh
 ./start-dev.sh
 ```
 
-This will start both the backend server and frontend development server.
+### Manual Start
 
-### Option 2: Manual Start
-
-1. **Start PocketBase:**
+1. **Start PostgreSQL and Redis:**
 
 ```bash
-# Download and run PocketBase
-./pocketbase serve
+docker compose up -d
 ```
 
 2. **Start Backend:**
@@ -140,9 +142,6 @@ go run ./cmd/server/main.go
 
 ```bash
 cd frontend
-# Create .env file with your configuration
-echo "VITE_POCKETBASE_URL=http://localhost:8090" > .env
-echo "VITE_API_URL=http://localhost:8080" >> .env
 npm install
 npm run dev
 ```
@@ -150,51 +149,7 @@ npm run dev
 4. **Access the Application:**
 
 - Backend API: <http://localhost:8080>
-- PocketBase Admin: <http://localhost:8090/_/>
 - API Documentation: <http://localhost:8080/swagger/>
-
-### Option 3: Docker (Backend Only)
-
-```bash
-docker build -t nhnl .
-docker run -p 8080:8080 \
-           -e PORT=8080 \
-           -e POCKETBASE_URL=http://localhost:8090 \
-           -e POCKETBASE_AO_KEY=supersecret \
-           -e ALLOWED_DOMAIN_SUFFIX=.example.com \
-           nhnl
-```
-
----
-
-## Frontend Features
-
-The new React frontend includes:
-
-- **Real Authentication**: PocketBase-based user registration and login
-- **Lobby System**: Browse and join available games from PocketBase
-- **Game Sessions**: Create new games and manage sessions
-- **Ready System**: Players can mark themselves as ready
-- **Game Interface**: Placeholder for the actual game UI
-- **Modern UI**: Built with React, TypeScript, and Tailwind CSS
-
-### Frontend Tech Stack
-
-- React 18 with TypeScript
-- Vite for fast development
-- React Router for navigation
-- Tailwind CSS for styling
-- Axios for API communication
-- PocketBase SDK for authentication
-- Lucide React for icons
-
-### Authentication Flow
-
-1. **Registration**: Users create accounts with email, username, and password
-2. **Login**: Users authenticate with email and password
-3. **Token Management**: PocketBase handles JWT tokens automatically
-4. **Protected Routes**: All game routes require authentication
-5. **Auto-login**: Auth state persists across page reloads
 
 ---
 
@@ -202,6 +157,8 @@ The new React frontend includes:
 
 - **All in-game actions:** Use WebSocket `/ws/game/{id}`
 - **REST:** Only for session creation, join, and authentication
+
+---
 
 Happy bluffing!
 

@@ -21,7 +21,7 @@ type Loot struct {
 	Gems  int `json:"gems" example:"2"`
 }
 
-// GameSession mirrors the PocketBase record we work with.
+// GameSession is the main session struct.
 // @Description Game session information
 type GameSession struct {
 	ID        string    `json:"id" example:"session123"`

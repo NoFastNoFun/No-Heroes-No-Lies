@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sort"
 
-	"no-heroes-no-lies/internal/pb"
+	"no-heroes-no-lies/internal/db"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -21,7 +21,7 @@ import (
 // @Failure 401 {string} string "Unauthorized"
 // @Failure 500 {string} string "Internal server error"
 // @Router /cards [get]
-func CardsHandler(pbClient *pb.Client) http.HandlerFunc {
+func CardsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Check if the request context has been cancelled (shutdown in progress)
 		select {
@@ -31,7 +31,7 @@ func CardsHandler(pbClient *pb.Client) http.HandlerFunc {
 		default:
 		}
 
-		cards, err := pbClient.ListCards()
+		cards, err := db.GetAllCards()
 		if err != nil {
 			http.Error(w, "Failed to fetch cards", http.StatusInternalServerError)
 			return
@@ -48,6 +48,6 @@ func CardsHandler(pbClient *pb.Client) http.HandlerFunc {
 }
 
 // RegisterCardsRoutes registers the cards routes with the router.
-func RegisterCardsRoutes(r chi.Router, pbClient *pb.Client) {
-	r.Get("/api/cards", CardsHandler(pbClient))
+func RegisterCardsRoutes(r chi.Router) {
+	r.Get("/api/cards", CardsHandler())
 }

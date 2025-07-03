@@ -2,13 +2,9 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"log"
 	"net/http"
 	"strings"
-
-	"no-heroes-no-lies/internal/services"
 )
 
 const (
@@ -33,28 +29,13 @@ func Middleware() func(http.Handler) http.Handler {
 				return
 			}
 
-			userID, pbHash, err := VerifyJWT(cookie.Value)
-			if err != nil {
-				log.Printf("Auth middleware: JWT verification failed for %s %s: %v", r.Method, r.URL.Path, err)
-				http.Error(w, "invalid token", http.StatusUnauthorized)
+			userID, _, err := VerifyJWT(cookie.Value)
+			if err != nil || userID == "" {
+				log.Printf("Auth middleware: invalid JWT for %s %s", r.Method, r.URL.Path)
+				http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 				return
 			}
 
-			sess, err := services.GetPBSession(r.Context(), userID)
-			if err != nil {
-				log.Printf("Auth middleware: failed to load PB session for user %s: %v", userID, err)
-				http.Error(w, "session expired", http.StatusUnauthorized)
-				return
-			}
-			// Check PB access token hash
-			hash := sha256.Sum256([]byte(sess.AccessToken))
-			if hex.EncodeToString(hash[:]) != pbHash {
-				log.Printf("Auth middleware: PB token hash mismatch for user %s", userID)
-				http.Error(w, "token revoked", http.StatusUnauthorized)
-				return
-			}
-
-			log.Printf("Auth middleware: JWT and PB token verified for user %s on %s %s", userID, r.Method, r.URL.Path)
 			ctx := context.WithValue(r.Context(), ctxKeyUserID, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

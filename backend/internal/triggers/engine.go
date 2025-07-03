@@ -2,7 +2,6 @@ package triggers
 
 import (
 	"no-heroes-no-lies/internal/models"
-	"no-heroes-no-lies/internal/pb"
 )
 
 // Event carries runtime data for any in-game occurrence.
@@ -19,7 +18,6 @@ type Event struct {
 type Handler func(
 	session *models.GameSession,
 	ev *Event,
-	pbCli *pb.Client,
 )
 
 // registry maps event type → slice of handlers.
@@ -35,10 +33,9 @@ func Register(event string, fn Handler) {
 func Dispatch(
 	session *models.GameSession,
 	ev *Event,
-	pbCli *pb.Client,
 ) bool {
 	for _, h := range registry[ev.Type] {
-		h(session, ev, pbCli)
+		h(session, ev)
 		if ev.Cancel {
 			return true
 		}

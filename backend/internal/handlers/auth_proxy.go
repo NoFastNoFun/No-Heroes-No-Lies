@@ -2,19 +2,56 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
 	"no-heroes-no-lies/internal/auth"
-	"no-heroes-no-lies/internal/pb"
-	"no-heroes-no-lies/internal/services"
+	"no-heroes-no-lies/internal/db"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 var jwtExpiry = 15 * time.Minute // can be made configurable
 
+// AuthRegisterHandler handles POST /auth/register
+func AuthRegisterHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Email    string `json:"email"`
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+		if req.Email == "" || req.Username == "" || req.Password == "" {
+			http.Error(w, "Missing fields", http.StatusBadRequest)
+			return
+		}
+		// Hash password
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+			return
+		}
+		user, err := db.CreateUser(req.Email, req.Username, string(hash))
+		if err != nil {
+			http.Error(w, "User already exists", http.StatusConflict)
+			return
+		}
+		jwtToken, err := auth.SignJWT(user.ID, "", jwtExpiry)
+		if err != nil {
+			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+			return
+		}
+		setAuthCookie(w, jwtToken)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // AuthLoginHandler handles POST /auth/login
-func AuthLoginHandler(pbClient *pb.Client) http.HandlerFunc {
+func AuthLoginHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Email    string `json:"email"`
@@ -24,19 +61,16 @@ func AuthLoginHandler(pbClient *pb.Client) http.HandlerFunc {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
-		userID, accessToken, refreshToken, _, err := pbClient.AuthWithPasswordFull(req.Email, req.Password)
+		user, err := db.GetUserByEmail(req.Email)
 		if err != nil {
 			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
-		sess := services.PBSession{AccessToken: accessToken, RefreshToken: refreshToken}
-		err = services.SetPBSession(r.Context(), userID, sess, jwtExpiry)
-		if err != nil {
-			log.Printf("Failed to store PB session: %v", err)
-			http.Error(w, "Server error", http.StatusInternalServerError)
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
-		jwtToken, err := auth.SignJWT(userID, accessToken, jwtExpiry)
+		jwtToken, err := auth.SignJWT(user.ID, "", jwtExpiry)
 		if err != nil {
 			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 			return
@@ -47,36 +81,14 @@ func AuthLoginHandler(pbClient *pb.Client) http.HandlerFunc {
 }
 
 // AuthRefreshHandler handles POST /auth/refresh
-func AuthRefreshHandler(pbClient *pb.Client) http.HandlerFunc {
+func AuthRefreshHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		jwtToken, err := readAuthCookie(r)
 		if err != nil {
 			http.Error(w, "Missing auth cookie", http.StatusUnauthorized)
 			return
 		}
-		userID, _, err := auth.VerifyJWT(jwtToken)
-		if err != nil {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-		sess, err := services.GetPBSession(r.Context(), userID)
-		if err != nil {
-			http.Error(w, "Session expired", http.StatusUnauthorized)
-			return
-		}
-		newAccessToken, newRefreshToken, err := pbClient.AuthRefresh(sess.AccessToken, sess.RefreshToken)
-		if err != nil {
-			http.Error(w, "Failed to refresh", http.StatusUnauthorized)
-			return
-		}
-		sess = services.PBSession{AccessToken: newAccessToken, RefreshToken: newRefreshToken}
-		err = services.SetPBSession(r.Context(), userID, sess, jwtExpiry)
-		if err != nil {
-			log.Printf("Failed to update PB session: %v", err)
-			http.Error(w, "Server error", http.StatusInternalServerError)
-			return
-		}
-		jwtToken, err = auth.SignJWT(userID, newAccessToken, jwtExpiry)
+		jwtToken, err = auth.SignJWT("", "", jwtExpiry)
 		if err != nil {
 			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 			return
@@ -87,25 +99,8 @@ func AuthRefreshHandler(pbClient *pb.Client) http.HandlerFunc {
 }
 
 // AuthLogoutHandler handles GET /auth/logout
-func AuthLogoutHandler(pbClient *pb.Client) http.HandlerFunc {
+func AuthLogoutHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		jwtToken, err := readAuthCookie(r)
-		if err != nil {
-			clearAuthCookie(w)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		userID, _, err := auth.VerifyJWT(jwtToken)
-		if err != nil {
-			clearAuthCookie(w)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		sess, err := services.GetPBSession(r.Context(), userID)
-		if err == nil {
-			_ = pbClient.AuthLogout(sess.AccessToken) // ignore error
-		}
-		_ = services.DeletePBSession(r.Context(), userID)
 		clearAuthCookie(w)
 		w.WriteHeader(http.StatusNoContent)
 	}

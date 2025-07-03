@@ -20,28 +20,35 @@ import (
 
 	"no-heroes-no-lies/internal/auth"
 	"no-heroes-no-lies/internal/config"
+	"no-heroes-no-lies/internal/db"
 	"no-heroes-no-lies/internal/handlers"
 	"no-heroes-no-lies/internal/hostfilter"
-	"no-heroes-no-lies/internal/pb"
 	"no-heroes-no-lies/internal/services"
 	"no-heroes-no-lies/internal/ws"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
+	"github.com/joho/godotenv"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
 func main() {
+	_ = godotenv.Load() // loads .env from current directory
 	cfg := config.Load()
 
 	// Set JWT secret
 	auth.SetJWTSecret(cfg.GameJWTSecret)
+
+	// Initialize Postgres
+	if err := db.InitPostgres(); err != nil {
+		log.Fatalf("Failed to connect to Postgres: %v", err)
+	}
+
 	// Initialize Redis
 	services.InitRedis(cfg.RedisAddr)
 
-	pbClient := pb.NewClient(cfg.PocketBaseURL, cfg.PocketBaseAOKey)
-	gameSvc := services.NewGameService(pbClient)
-	sessionSvc := services.NewSessionService(pbClient)
+	sessionSvc := services.NewSessionService()
+	gameSvc := services.NewGameService(sessionSvc)
 
 	r := chi.NewRouter()
 
@@ -61,9 +68,10 @@ func main() {
 	r.Get("/api/health/slow", handlers.SlowHealthHandler)
 
 	// Auth routes (no auth required)
-	r.Post("/api/auth/login", handlers.AuthLoginHandler(pbClient))
-	r.Post("/api/auth/refresh", handlers.AuthRefreshHandler(pbClient))
-	r.Get("/api/auth/logout", handlers.AuthLogoutHandler(pbClient))
+	r.Post("/api/auth/register", handlers.AuthRegisterHandler())
+	r.Post("/api/auth/login", handlers.AuthLoginHandler())
+	r.Post("/api/auth/refresh", handlers.AuthRefreshHandler())
+	r.Get("/api/auth/logout", handlers.AuthLogoutHandler())
 
 	// OpenAPI documentation
 	r.Get("/swagger/*", httpSwagger.Handler(
@@ -79,7 +87,6 @@ func main() {
 		handlers.RegisterSessionRoutes(r, sessionSvc)
 		handlers.RegisterGameRoutes(r, gameSvc)
 		handlers.RegisterChallengeRoute(r, gameSvc)
-		handlers.RegisterCardsRoutes(r, pbClient)
 	})
 
 	// WebSocket endpoint for real-time game updates

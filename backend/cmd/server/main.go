@@ -39,9 +39,11 @@ func main() {
 	// Set JWT secret
 	auth.SetJWTSecret(cfg.GameJWTSecret)
 
-	// Initialize Postgres
+	// Initialize Postgres (optional for DB-lite mode)
+	dbAvailable := true
 	if err := db.InitPostgres(); err != nil {
-		log.Fatalf("Failed to connect to Postgres: %v", err)
+		dbAvailable = false
+		log.Printf("Postgres unavailable; running in DB-lite mode (no login/history): %v", err)
 	}
 
 	// Initialize Redis
@@ -68,9 +70,9 @@ func main() {
 	r.Get("/api/health/slow", handlers.SlowHealthHandler)
 
 	// Auth routes (no auth required)
-	r.Post("/api/auth/register", handlers.AuthRegisterHandler())
-	r.Post("/api/auth/login", handlers.AuthLoginHandler())
-	r.Post("/api/auth/refresh", handlers.AuthRefreshHandler())
+	r.Post("/api/auth/register", handlers.AuthRegisterHandler(dbAvailable))
+	r.Post("/api/auth/login", handlers.AuthLoginHandler(dbAvailable))
+	r.Post("/api/auth/refresh", handlers.AuthRefreshHandler(dbAvailable))
 	r.Get("/api/auth/logout", handlers.AuthLogoutHandler())
 
 	// OpenAPI documentation

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sort"
 
-	"no-heroes-no-lies/internal/db"
+	"no-heroes-no-lies/internal/design"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -31,11 +31,7 @@ func CardsHandler() http.HandlerFunc {
 		default:
 		}
 
-		cards, err := db.GetAllCards()
-		if err != nil {
-			http.Error(w, "Failed to fetch cards", http.StatusInternalServerError)
-			return
-		}
+		cards := design.AllCards()
 
 		// Sort cards by strength (strongest to weakest)
 		sort.Slice(cards, func(i, j int) bool {

@@ -14,8 +14,12 @@ import (
 var jwtExpiry = 15 * time.Minute // can be made configurable
 
 // AuthRegisterHandler handles POST /auth/register
-func AuthRegisterHandler() http.HandlerFunc {
+func AuthRegisterHandler(dbAvailable bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !dbAvailable {
+			http.Error(w, "User registration disabled: database unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		var req struct {
 			Email    string `json:"email"`
 			Username string `json:"username"`
@@ -51,8 +55,12 @@ func AuthRegisterHandler() http.HandlerFunc {
 }
 
 // AuthLoginHandler handles POST /auth/login
-func AuthLoginHandler() http.HandlerFunc {
+func AuthLoginHandler(dbAvailable bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !dbAvailable {
+			http.Error(w, "Login disabled: database unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		var req struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
@@ -81,7 +89,7 @@ func AuthLoginHandler() http.HandlerFunc {
 }
 
 // AuthRefreshHandler handles POST /auth/refresh
-func AuthRefreshHandler() http.HandlerFunc {
+func AuthRefreshHandler(dbAvailable bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		jwtToken, err := readAuthCookie(r)
 		if err != nil {

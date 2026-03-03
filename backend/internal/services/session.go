@@ -131,8 +131,54 @@ func (s *SessionService) StartSession(sessionID string) (models.GameSession, err
 	if len(session.State.ReadyIDs) != len(session.PlayerIDs) {
 		return session, errors.New("all players must be ready")
 	}
-	// TODO: Fetch cards from PostgreSQL, build decks, shuffle, deal, etc.
-	// For now, just activate session
+
+	// Initialize random seed for this session if not already set
+	if session.State.Seed == 0 {
+		session.State.Seed = time.Now().UnixNano()
+	}
+	rng := rand.New(rand.NewSource(session.State.Seed))
+
+	// Build hero and monster decks from static design data
+	var heroDeck []string
+	var monsterDeck []string
+	for _, c := range design.AllCards() {
+		switch c.Type {
+		case "hero":
+			for i := 0; i < c.DefaultAmountPerSession; i++ {
+				heroDeck = append(heroDeck, c.ID)
+			}
+		case "monster":
+			// Use DefaultAmountPerSession for monsters as well; if zero, default to 1 copy
+			count := c.DefaultAmountPerSession
+			if count <= 0 {
+				count = 1
+			}
+			for i := 0; i < count; i++ {
+				monsterDeck = append(monsterDeck, c.ID)
+			}
+		}
+	}
+
+	// Shuffle decks deterministically based on session seed
+	rng.Shuffle(len(heroDeck), func(i, j int) {
+		heroDeck[i], heroDeck[j] = heroDeck[j], heroDeck[i]
+	})
+	rng.Shuffle(len(monsterDeck), func(i, j int) {
+		monsterDeck[i], monsterDeck[j] = monsterDeck[j], monsterDeck[i]
+	})
+
+	// Initialize active monsters (up to 2 at start)
+	activeCount := 2
+	if activeCount > len(monsterDeck) {
+		activeCount = len(monsterDeck)
+	}
+	activeMonsters := append([]string{}, monsterDeck[:activeCount]...)
+	monsterDeck = monsterDeck[activeCount:]
+
+	session.State.HeroDeck = heroDeck
+	session.State.MonsterDeck = monsterDeck
+	session.State.ActiveMonsters = activeMonsters
+
 	session.IsActive = true
 	if err := saveSession(session); err != nil {
 		return session, err

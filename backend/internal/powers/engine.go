@@ -4,7 +4,7 @@ import (
 	"errors"
 	"math/rand"
 
-	"no-heroes-no-lies/internal/db"
+	"no-heroes-no-lies/internal/design"
 	"no-heroes-no-lies/internal/models"
 	"no-heroes-no-lies/internal/triggers"
 )
@@ -52,13 +52,13 @@ func alibiPassives(
 	if p.CurrentAlibi == "" {
 		return nil, nil
 	}
-	card, err := db.GetCard(p.CurrentAlibi)
+	card, err := design.GetCard(p.CurrentAlibi)
 	if err != nil {
 		return nil, err
 	}
 	var acts []string
 	for _, id := range card.PowerIDs {
-		pw, err := db.GetPower(id)
+		pw, err := design.GetPower(id)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +154,7 @@ func init() {
 			if p.DiscardCardID == "" {
 				return errors.New("discard_card_id missing")
 			}
-			card, err := db.GetCard(p.DiscardCardID)
+			card, err := design.GetCard(p.DiscardCardID)
 			if err != nil {
 				return err
 			}
@@ -172,7 +172,7 @@ func init() {
 }
 
 func effectiveStrength(s *models.GameSession, p *models.PlayerState) int {
-	card, err := db.GetCard(p.CurrentAlibi)
+	card, err := design.GetCard(p.CurrentAlibi)
 	if err != nil {
 		return 0
 	}
@@ -541,7 +541,7 @@ func init() {
 		}
 
 		// Get card info to check if it's unique
-		card, err := db.GetCard(p.DiscardCardID)
+		card, err := design.GetCard(p.DiscardCardID)
 		if err != nil {
 			return err
 		}
@@ -647,11 +647,11 @@ func init() {
 			return errors.New("missing discard_card_id or monster_id")
 		}
 		// Simulate a fight between the discarded hero and the monster
-		card, err := db.GetCard(p.DiscardCardID)
+		card, err := design.GetCard(p.DiscardCardID)
 		if err != nil {
 			return err
 		}
-		monster, err := db.GetCard(p.MonsterID)
+		monster, err := design.GetCard(p.MonsterID)
 		if err != nil {
 			return err
 		}

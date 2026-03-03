@@ -6,6 +6,9 @@ import (
 	"math/rand"
 	"time"
 
+	"log"
+
+	"no-heroes-no-lies/internal/design"
 	"no-heroes-no-lies/internal/db"
 	"no-heroes-no-lies/internal/models"
 	"no-heroes-no-lies/internal/powers"
@@ -97,13 +100,29 @@ func (s *GameService) ApplyMove(
 			ExpiresAt:     time.Now().Add(ChallengeWindowDuration).UnixMilli(),
 		}
 	case "power":
-		// Enforce power sequence: must pick a card, discard a card, declare alibi, use power
-		if payload.DrawnCardID == "" || payload.DiscardCardID == "" || payload.DeclaredAlibi == "" || payload.PowerID == "" {
-			return errors.New("power move must include drawn_card_id, discard_card_id, declared_alibi, and power_id")
+		// Enforce power sequence: must pick a card, discard a card, declare alibi, then use a power
+		if payload.DiscardCardID == "" || payload.DeclaredAlibi == "" || payload.PowerID == "" {
+			return errors.New("power move must include discard_card_id, declared_alibi, and power_id")
 		}
+
+		actor := playerPtr(&session, playerID)
+		if actor == nil {
+			return errors.New("player state not found")
+		}
+
+		// Step 1: draw a hero card for this power use (pick a card)
+		if err := s.applyPowerDrawAndDiscard(&session, actor, &payload); err != nil {
+			return err
+		}
+
+		// Step 2: declare alibi (can be any hero, not forced to be current hero)
+		actor.CurrentAlibi = payload.DeclaredAlibi
+
+		// Step 3: pay cost / execute chosen power (free or paid)
 		if err := s.handlePower(&session, playerID, payload); err != nil {
 			return err
 		}
+
 		// Start challenge window at alibi declaration, lasting until end of turn + ChallengeWindowDuration
 		session.State.LastMove = &models.LastMove{
 			ActorID:       playerID,
@@ -126,17 +145,64 @@ func (s *GameService) ApplyMove(
 		return err
 	}
 
-	// log move
+	// log move (best-effort; do not break gameplay if DB is down)
 	b, _ := json.Marshal(payload)
-	return db.InsertMove(models.Move{
+	if err := db.InsertMove(models.Move{
 		SessionID: session.ID,
 		PlayerID:  playerID,
 		Type:      payload.Type,
 		Data:      string(b),
-	})
+	}); err != nil {
+		log.Printf("failed to insert move log: %v", err)
+	}
+	return nil
 }
 
 // ── move handlers ─────────────────────────────────────────────────────────
+
+// applyPowerDrawAndDiscard implements the generic rule for power moves:
+// 1) draw a hero card, 2) discard exactly one of [drawn card, current hero],
+// 3) make the discarded card public via discard pile.
+func (s *GameService) applyPowerDrawAndDiscard(
+	session *models.GameSession,
+	actor *models.PlayerState,
+	p *models.MovePayload,
+) error {
+	// Ensure there is at least one card to draw; try recycling discard pile if needed.
+	if len(session.State.HeroDeck) == 0 {
+		s.recycleDiscardPile(session)
+	}
+	if len(session.State.HeroDeck) == 0 {
+		return errors.New("no hero cards available to draw")
+	}
+
+	// Draw the top hero card for this power use.
+	drawnID := session.State.HeroDeck[0]
+	session.State.HeroDeck = session.State.HeroDeck[1:]
+	p.DrawnCardID = drawnID
+
+	// Discard must be either the drawn card or the actor's current hero (if any).
+	discardID := p.DiscardCardID
+	if discardID != drawnID && discardID != actor.CurrentHero {
+		return errors.New("discard_card_id must be either the drawn card or current hero")
+	}
+
+	// If discarding current hero, new hero becomes the drawn card.
+	if discardID == actor.CurrentHero && actor.CurrentHero != "" {
+		s.discardHeroCard(session, actor.CurrentHero)
+		actor.CurrentHero = drawnID
+		return nil
+	}
+
+	// Otherwise, discard the drawn card and keep current hero.
+	if discardID == drawnID {
+		s.discardHeroCard(session, drawnID)
+		return nil
+	}
+
+	// Should be unreachable due to earlier validation.
+	return errors.New("invalid discard choice")
+}
 
 func (s *GameService) handleDemask(
 	session *models.GameSession,
@@ -211,11 +277,11 @@ func (s *GameService) handleFight(
 		return errors.New("monster not active")
 	}
 
-	heroCard, err := db.GetCard(p.DeclaredAlibi)
+	heroCard, err := design.GetCard(p.DeclaredAlibi)
 	if err != nil {
 		return err
 	}
-	monsterCard, err := db.GetCard(p.MonsterID)
+	monsterCard, err := design.GetCard(p.MonsterID)
 	if err != nil {
 		return err
 	}
@@ -278,7 +344,7 @@ func (s *GameService) handlePower(
 	p models.MovePayload,
 ) error {
 	// fetch power definition
-	pwr, err := db.GetPower(p.PowerID)
+	pwr, err := design.GetPower(p.PowerID)
 	if err != nil {
 		return err
 	}
@@ -387,13 +453,13 @@ func alibiPassives(
 	if player.CurrentAlibi == "" {
 		return nil, nil // no alibi declared ⇒ no passive
 	}
-	card, err := db.GetCard(player.CurrentAlibi)
+	card, err := design.GetCard(player.CurrentAlibi)
 	if err != nil {
 		return nil, err
 	}
 	var acts []string
 	for _, id := range card.PowerIDs {
-		pwr, err := db.GetPower(id)
+		pwr, err := design.GetPower(id)
 		if err != nil {
 			return nil, err
 		}
@@ -450,7 +516,7 @@ func effectiveStrength(
 	_ *models.GameSession,
 	player *models.PlayerState,
 ) int {
-	card, err := db.GetCard(player.CurrentAlibi)
+	card, err := design.GetCard(player.CurrentAlibi)
 	if err != nil {
 		return 0
 	}
@@ -545,14 +611,17 @@ func (s *GameService) Forfeit(sessionID, playerID string) error {
 		return err
 	}
 
-	// log move
+	// log move (best-effort; do not break gameplay if DB is down)
 	move, _ := json.Marshal(map[string]string{"type": "forfeit"})
-	return db.InsertMove(models.Move{
+	if err := db.InsertMove(models.Move{
 		SessionID: session.ID,
 		PlayerID:  playerID,
 		Type:      "forfeit",
 		Data:      string(move),
-	})
+	}); err != nil {
+		log.Printf("failed to insert forfeit move log: %v", err)
+	}
+	return nil
 }
 
 // Helper function to discard a hero card (adds to discard pile and updates public discard)

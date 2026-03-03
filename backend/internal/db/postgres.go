@@ -36,64 +36,6 @@ func InitPostgres() error {
 	return DB.Ping()
 }
 
-// GetAllCards fetches all cards from the database and maps them to the Card struct.
-func GetAllCards() ([]models.Card, error) {
-	rows, err := DB.Query(`SELECT id, name, strength, default_spawn, rarity, power1, power2, notes FROM cards`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var cards []models.Card
-	for rows.Next() {
-		var c models.Card
-		var defaultSpawn sql.NullInt64
-		var notes sql.NullString
-		// Only map available fields
-		err := rows.Scan(&c.ID, &c.Name, &c.Strength, &defaultSpawn, &c.Type, &c.Description, &c.CoverURL, &notes)
-		if err != nil {
-			return nil, err
-		}
-		if defaultSpawn.Valid {
-			c.DefaultAmountPerSession = int(defaultSpawn.Int64)
-		}
-		if notes.Valid {
-			c.Description = notes.String
-		}
-		cards = append(cards, c)
-	}
-	return cards, nil
-}
-
-// GetCard fetches a single card by ID.
-func GetCard(id string) (models.Card, error) {
-	var c models.Card
-	row := DB.QueryRow(`SELECT id, name, strength, default_spawn, rarity, power1, power2, notes FROM cards WHERE id = $1`, id)
-	var defaultSpawn sql.NullInt64
-	var notes sql.NullString
-	err := row.Scan(&c.ID, &c.Name, &c.Strength, &defaultSpawn, &c.Type, &c.Description, &c.CoverURL, &notes)
-	if err != nil {
-		return c, err
-	}
-	if defaultSpawn.Valid {
-		c.DefaultAmountPerSession = int(defaultSpawn.Int64)
-	}
-	if notes.Valid {
-		c.Description = notes.String
-	}
-	return c, nil
-}
-
-// GetPower fetches a single power by name.
-func GetPower(name string) (models.Power, error) {
-	var p models.Power
-	row := DB.QueryRow(`SELECT name, cost, target, description, is_passive, trigger FROM powers WHERE name = $1`, name)
-	err := row.Scan(&p.Name, &p.Cost, &p.Target, &p.Description, &p.Type, &p.Trigger)
-	if err != nil {
-		return p, err
-	}
-	return p, nil
-}
-
 // InsertMove inserts a move into the moves table.
 func InsertMove(m models.Move) error {
 	_, err := DB.Exec(`INSERT INTO moves (session_id, player_id, type, move_data, created_at) VALUES ($1, $2, $3, $4, NOW())`, m.SessionID, m.PlayerID, m.Type, m.Data)

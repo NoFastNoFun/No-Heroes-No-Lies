@@ -1,0 +1,2 @@
+-- Schema version tracking is done by the migration runner (schema_migrations table).
+-- This file ensures the migrations directory is non-empty for embed.

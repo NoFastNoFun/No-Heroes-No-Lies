@@ -1,28 +1,51 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+	"time"
+)
 
-// Config holds runtime configuration.
 type Config struct {
-	Port                string
-	AllowedDomainSuffix string
-	RedisAddr           string
-	GameJWTSecret       string
+	Port            int
+	DatabaseURL     string
+	JWTSecret       string
+	SessionTTL      time.Duration
+	ChallengeWindow time.Duration
 }
 
-// Load reads env vars and returns a Config.
-func Load() Config {
-	return Config{
-		Port:                getenv("PORT", "8080"),
-		AllowedDomainSuffix: getenv("ALLOWED_DOMAIN_SUFFIX", "localhost:8080"),
-		RedisAddr:           getenv("REDIS_ADDR", "localhost:6379"),
-		GameJWTSecret:       getenv("GAME_JWT_SECRET", "changeme"),
+func Load() (*Config, error) {
+	port := 8080
+	if p := os.Getenv("PORT"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil {
+			port = v
+		}
 	}
-}
-
-func getenv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = "postgres://postgres:postgres@localhost:5432/nhml?sslmode=disable"
 	}
-	return def
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret-change-in-production"
+	}
+	sessionTTL := 24 * time.Hour
+	if s := os.Getenv("SESSION_TTL"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			sessionTTL = d
+		}
+	}
+	challengeWindow := 10 * time.Second
+	if s := os.Getenv("CHALLENGE_WINDOW"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			challengeWindow = d
+		}
+	}
+	return &Config{
+		Port:            port,
+		DatabaseURL:     databaseURL,
+		JWTSecret:       jwtSecret,
+		SessionTTL:      sessionTTL,
+		ChallengeWindow: challengeWindow,
+	}, nil
 }

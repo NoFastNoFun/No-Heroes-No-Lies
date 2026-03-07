@@ -1,42 +1,48 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
-var jwtSecret []byte
-
-// SetJWTSecret sets the secret for signing JWTs.
-func SetJWTSecret(secret string) {
-	jwtSecret = []byte(secret)
+type Claims struct {
+	jwt.RegisteredClaims
+	PlayerID string `json:"player_id"`
 }
 
-// SignJWT creates a JWT for the given userID.
-func SignJWT(userID string, _ string, expiry time.Duration) (string, error) {
-	claims := jwt.MapClaims{
-		"sub": userID,
-		"exp": time.Now().Add(expiry).Unix(),
+func NewToken(playerID uuid.UUID, secret string, ttl time.Duration) (string, error) {
+	now := time.Now()
+	claims := &Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ID:        uuid.New().String(),
+		},
+		PlayerID: playerID.String(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return t.SignedString([]byte(secret))
 }
 
-// VerifyJWT parses and validates the JWT, returning userID.
-func VerifyJWT(tokenString string) (userID string, _ string, err error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
-		}
-		return jwtSecret, nil
+func ParseToken(tokenString, secret string) (*Claims, error) {
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(secret), nil
 	})
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		uid, _ := claims["sub"].(string)
-		return uid, "", nil
+	if !token.Valid {
+		return nil, jwt.ErrTokenInvalidClaims
 	}
-	return "", "", jwt.ErrTokenMalformed
+	return claims, nil
+}
+
+func HashToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
 }

@@ -1,13 +1,21 @@
 package models
 
-type PlayerState struct {
-	ID            string   `json:"id"`
-	Life          int      `json:"life"`
-	Coins         int      `json:"coins"`
-	Gems          int      `json:"gems"`
-	CurrentHero   string   `json:"current_hero"`
-	CurrentAlibi  string   `json:"current_alibi"`
-	Hand          []string `json:"hand,omitempty"`
-	BonusStrength int      `json:"bonus_strength"` // temp +1 from add_strength_to_challenger
-	AltStrength   bool     `json:"alt_strength"`   // For werewolf
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type Player struct {
+	ID        uuid.UUID
+	Username  string
+	CreatedAt time.Time
+}
+
+type Session struct {
+	ID        uuid.UUID
+	PlayerID  uuid.UUID
+	TokenHash string
+	ExpiresAt time.Time
+	CreatedAt time.Time
 }
